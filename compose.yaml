@@ -1,0 +1,81 @@
+name: autoposting
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    APP_DATABASE_URL: postgresql+psycopg://autoposting:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/autoposting
+    APP_MEDIA_DIR: /var/lib/autoposting/media
+  volumes:
+    - media:/var/lib/autoposting/media
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,size=128m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  init-media:
+    build: .
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 10001:10001 /var/lib/autoposting/media"]
+    volumes:
+      - media:/var/lib/autoposting/media
+    restart: "no"
+    cap_add:
+      - CHOWN
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: autoposting
+      POSTGRES_USER: autoposting
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoposting -d autoposting"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    <<: *app
+    command: ["python", "-m", "app.init_db"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      init-media:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      init-media:
+        condition: service_completed_successfully
+
+volumes:
+  postgres:
+  media:

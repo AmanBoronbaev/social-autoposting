@@ -1,0 +1,37 @@
+services:
+  nginx:
+    image: nginx:stable-alpine
+    env_file: .env
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+      APP_PATH: ${APP_PATH:?set APP_PATH}
+    entrypoint: ["/usr/local/bin/autoposting-nginx-entrypoint"]
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/nginx/entrypoint.sh:/usr/local/bin/autoposting-nginx-entrypoint:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot-web:/var/www/certbot:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["tools"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-web:/var/www/certbot
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  letsencrypt:
+  certbot-web:

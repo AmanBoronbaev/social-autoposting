@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Autoposting Let's Encrypt certificates
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/autoposting
+ExecStart=/opt/autoposting/deploy/renew-certificates.sh

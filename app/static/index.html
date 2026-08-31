@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Автопостинг</title>
+    <link rel="stylesheet" href="assets/app.css">
+    <script defer src="assets/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="./">Автопостинг</a>
+        <div id="identity" class="muted"></div>
+        <button id="logout" class="secondary hidden" type="button">Выйти</button>
+      </header>
+
+      <section id="login-card" class="card narrow">
+        <h1>Вход в кабинет</h1>
+        <p class="muted">Кабинет создаёт владелец сервиса.</p>
+        <form id="login-form" class="form">
+          <label>Email <input id="login-email" type="email" required autocomplete="username"></label>
+          <label>Пароль <input id="login-password" type="password" required autocomplete="current-password"></label>
+          <button type="submit">Войти</button>
+        </form>
+        <p id="login-error" class="error" role="alert"></p>
+      </section>
+
+      <section id="app" class="hidden">
+        <nav class="tabs" aria-label="Разделы">
+          <button class="tab active" data-page="compose" type="button">Новый пост</button>
+          <button class="tab" data-page="connections" type="button">Мои площадки</button>
+          <button class="tab" data-page="history" type="button">История</button>
+          <button id="admin-tab" class="tab hidden" data-page="admin" type="button">Кабинеты</button>
+        </nav>
+
+        <section id="compose" class="page active card">
+          <h1>Новый пост</h1>
+          <form id="post-form" class="form">
+            <label>Текст
+              <textarea id="post-content" rows="8" maxlength="10000" placeholder="Текст публикации"></textarea>
+            </label>
+            <label>Фото, видео или PDF
+              <input id="post-files" type="file" multiple accept="image/*,video/*,application/pdf">
+              <small>Видео перед отправкой приводится к MP4 (H.264/AAC). PDF можно отправлять только в Telegram и WhatsApp.</small>
+            </label>
+            <label>Время публикации
+              <input id="scheduled-at" type="datetime-local">
+              <small>Пусто — опубликовать сразу. Время считается в часовом поясе вашего устройства.</small>
+            </label>
+            <label>Формат Instagram
+              <select id="instagram-content-type">
+                <option value="standard">Обычная публикация / Reel / карусель</option>
+                <option value="story">История (Story)</option>
+              </select>
+              <small>История требует одно фото или видео и может быть отправлена только в Instagram через Zernio. Instagram не показывает подпись Story и не даёт добавить link sticker через API.</small>
+            </label>
+            <fieldset id="tiktok-options" class="hidden">
+              <legend>TikTok</legend>
+              <label>Видимость <select id="tiktok-privacy" disabled></select><small>Обязательно: доступные варианты берутся из TikTok-аккаунта.</small></label>
+              <label class="check"><input id="tiktok-allow-comment" type="checkbox"> Разрешить комментарии</label>
+              <label class="check"><input id="tiktok-allow-duet" type="checkbox"> Разрешить Duet</label>
+              <label class="check"><input id="tiktok-allow-stitch" type="checkbox"> Разрешить Stitch</label>
+              <label>Коммерческий контент <select id="tiktok-commercial" disabled></select></label>
+              <label class="check"><input id="tiktok-ai" type="checkbox"> Видео создано ИИ</label>
+              <label class="check"><input id="tiktok-draft" type="checkbox"> Сохранить в черновиках TikTok вместо публикации</label>
+              <label class="tiktok-photo-option hidden">Индекс обложки карусели <input id="tiktok-photo-cover-index" type="number" min="0" max="34" placeholder="Необязательно: от 0 до 34"></label>
+              <label class="check tiktok-photo-option hidden"><input id="tiktok-auto-music" type="checkbox"> Добавить рекомендованную музыку TikTok к фотокарусели</label>
+              <label class="tiktok-video-option hidden">Кадр обложки видео, мс <input id="tiktok-video-cover-timestamp" type="number" min="0" max="600000" placeholder="1000 по умолчанию"></label>
+              <label class="check"><input id="tiktok-consent" type="checkbox" required> Подтверждаю предпросмотр контента и согласие на публикацию в TikTok <em>(обязательно)</em></label>
+              <small id="tiktok-help">Для API всегда передаются переключатели комментариев, Duet и Stitch — их можно выключить. Выбор видимости и подтверждение согласия обязательны; остальные параметры необязательны.</small>
+            </fieldset>
+            <fieldset>
+              <legend>Куда отправить</legend>
+              <div id="post-targets" class="targets"><span class="muted">Сначала добавьте площадку.</span></div>
+            </fieldset>
+            <button type="submit">Создать публикацию</button>
+          </form>
+          <p id="post-result" class="notice" role="status"></p>
+        </section>
+
+        <section id="connections" class="page card hidden">
+          <h1>Мои площадки</h1>
+          <p>Площадки и ключи настраивает администратор сервиса. Здесь показаны только назначения, доступные вашему кабинету.</p>
+          <div id="connections-list" class="list"></div>
+        </section>
+
+        <section id="history" class="page card hidden">
+          <h1>История публикаций</h1>
+          <div id="posts-list" class="list"><span class="muted">Загрузка…</span></div>
+        </section>
+
+        <section id="admin" class="page card hidden">
+          <h1>Кабинеты пользователей</h1>
+          <div class="grid two">
+            <form id="user-form" class="form compact">
+              <h2>Создать кабинет</h2>
+              <label>Имя <input id="user-name" maxlength="160"></label>
+              <label>Email <input id="user-email" type="email" required></label>
+              <label>Первичный пароль <input id="user-password" type="password" minlength="12" required autocomplete="new-password"></label>
+              <label class="check"><input id="user-super" type="checkbox"> Дать права суперпользователя</label>
+              <button type="submit">Создать кабинет</button>
+            </form>
+            <form id="admin-credential-form" class="form compact">
+              <h2>Сохранить токен клиента</h2>
+              <label>Пользователь <select id="admin-credential-user" required></select></label>
+              <label>Сервис <select id="admin-credential-provider"><option value="zernio">Zernio</option><option value="telegram">Telegram Bot</option><option value="whapi">WhatsApp / Whapi</option></select></label>
+              <label>Токен клиента
+                <input id="admin-credential-token" type="password" required minlength="10" maxlength="4096" autocomplete="off">
+                <small>Записывается в зашифрованном виде и больше не отображается.</small>
+              </label>
+              <button type="submit">Сохранить токен</button>
+            </form>
+            <form id="admin-connection-form" class="form compact">
+              <h2>Добавить площадку пользователю</h2>
+              <label>Пользователь <select id="admin-connection-user" required></select></label>
+              <label>Сервис <select id="admin-connection-provider"><option value="zernio">Zernio — Instagram / TikTok</option><option value="telegram">Telegram</option><option value="whapi">WhatsApp / Whapi</option></select></label>
+              <label>Площадка <select id="admin-connection-platform" required></select></label>
+              <label>Название <input id="admin-connection-label" required maxlength="160"></label>
+              <label id="admin-zernio-account-field" class="hidden">Аккаунт Zernio
+                <select id="admin-zernio-account" disabled></select>
+                <small>Загружается из подключённых аккаунтов клиента. ID вручную не нужен.</small>
+              </label>
+              <label id="admin-automatic-target-field" class="hidden">Куда публиковать
+                <select id="admin-automatic-target" disabled></select>
+                <small id="admin-automatic-target-help"></small>
+                <button id="admin-refresh-targets" class="secondary" type="button">Обновить список</button>
+              </label>
+              <label id="admin-connection-target-field">Идентификатор назначения <input id="admin-connection-target" required maxlength="255"></label>
+              <button type="submit">Сохранить площадку</button>
+            </form>
+          </div>
+          <p class="muted">Клиент создаёт свои токены Zernio, Telegram Bot и Whapi и передаёт их вам. Сначала сохраните токен клиента, затем выберите площадку из списка. Для Telegram добавьте бота в группу и отправьте команду, либо назначьте его админом канала и опубликуйте тестовый пост; после этого нажмите «Обновить список». Пользователь секреты не видит.</p>
+          <p id="admin-result" class="notice" role="status"></p>
+          <div id="users-list" class="list"></div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
