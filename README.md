@@ -76,8 +76,8 @@ local `.env` with real credentials into Git.
    losing it makes stored Whapi tokens unreadable by design.
 3. Create an A record for `biamino.cc` pointing to the new server's public IPv4
    address. Before deployment, ensure no other web server occupies ports 80/443.
-   Set `APP_DOMAIN=biamino.cc`, `APP_PUBLIC_BASE_URL=https://biamino.cc`, a real
-   `CERTBOT_EMAIL`, and a unique `APP_PATH`. Generate it locally with
+   Set `APP_DOMAIN=biamino.cc`, a real `CERTBOT_EMAIL`, and a unique `APP_PATH`.
+   Generate it locally with
    `printf '/panel-%s/\\n' "$(openssl rand -hex 24)"`, then paste the printed
    value into `.env`. The path is an extra obscurity layer, not a substitute
    for a strong password and TLS.
@@ -113,7 +113,7 @@ logged.
 
 - This implementation defaults Telegram uploads to 50 MB. For larger Telegram
   video, deploy Telegram’s Local Bot API server separately, point
-  `TELEGRAM_API_BASE_URL` at it, and raise all three limits coherently: Caddy,
+  `TELEGRAM_API_BASE_URL` at it, and raise all three limits coherently: Nginx,
   `APP_MAX_UPLOAD_BYTES`, and `TELEGRAM_MAX_UPLOAD_BYTES`.
 - Whapi receives local media directly as Base64. It therefore works during a
   local test as well as in production and never needs direct access to the

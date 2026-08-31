@@ -13,15 +13,18 @@ email="$(read_env CERTBOT_EMAIL)"
 path="$(read_env APP_PATH)"
 [[ -n "$domain" && -n "$email" && -n "$path" ]] || die "APP_DOMAIN, CERTBOT_EMAIL and APP_PATH are required"
 [[ "$domain" != "post.example.com" && "$path" != *"CHANGE_ME"* ]] || die "replace example domain and secret path"
+[[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "APP_DOMAIN must be a valid DNS name"
 [[ "$path" =~ ^/[A-Za-z0-9._-]{12,128}/$ ]] || die "APP_PATH must be a URL-safe path ending in /"
 
 compose=(docker compose -f compose.yaml -f compose.prod.yaml)
+certbot_compose=(docker compose --profile tools -f compose.yaml -f compose.prod.yaml)
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build postgres init-media migrate web nginx
 
-if ! "${compose[@]}" run --rm certbot certificates -d "$domain" >/dev/null 2>&1; then
+if ! "${certbot_compose[@]}" run --rm --no-deps --entrypoint sh certbot \
+  -c "test -s /etc/letsencrypt/live/${domain}/fullchain.pem"; then
   printf 'Requesting the first TLS certificate for %s...\n' "$domain"
-  "${compose[@]}" run --rm certbot certonly --webroot --webroot-path /var/www/certbot \
+  "${certbot_compose[@]}" run --rm --no-deps certbot certonly --webroot --webroot-path /var/www/certbot \
     --email "$email" --agree-tos --no-eff-email -d "$domain"
   "${compose[@]}" restart nginx
 fi

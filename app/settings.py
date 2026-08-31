@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", env_prefix="APP_", extra="ignore")
 
     database_url: str = "postgresql+psycopg://autoposting:autoposting@postgres:5432/autoposting"
-    public_base_url: AnyHttpUrl = "https://post.example.com"
     jwt_secret: SecretStr
     encryption_key: SecretStr
     media_dir: Path = Path("/var/lib/autoposting/media")
@@ -64,10 +63,6 @@ class Settings(BaseSettings):
         if not re.fullmatch(r"/[A-Za-z0-9._-]{12,128}/", value):
             raise ValueError("APP_PATH must be / or a URL-safe path ending in /")
         return value
-
-    @property
-    def public_base(self) -> str:
-        return str(self.public_base_url).rstrip("/")
 
     @property
     def path_prefix(self) -> str:

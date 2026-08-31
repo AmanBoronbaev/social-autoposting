@@ -4,6 +4,11 @@ set -eu
 : "${APP_DOMAIN:?APP_DOMAIN is required}"
 : "${APP_PATH:?APP_PATH is required}"
 
+if ! printf '%s' "$APP_DOMAIN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'; then
+  echo "APP_DOMAIN must be a valid DNS name" >&2
+  exit 1
+fi
+
 case "$APP_PATH" in
   /*/) ;;
   *) echo "APP_PATH must start and end with /" >&2; exit 1 ;;

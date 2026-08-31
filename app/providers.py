@@ -45,7 +45,7 @@ def attachment_path(attachment: Attachment, settings: Settings) -> Path:
 
 @contextmanager
 def prepared_attachment(attachment: Attachment, settings: Settings) -> Iterator[PreparedAttachment]:
-    """Normalize every uploaded video to the MP4/H.264/AAC baseline.
+    """Normalize every uploaded video to an MP4/H.264/AAC, constant-30-FPS baseline.
 
     The same original may go to several platforms. Keeping the original in the
     database and preparing a temporary delivery copy avoids losing it while
@@ -78,6 +78,10 @@ def prepared_attachment(attachment: Attachment, settings: Settings) -> Iterator[
                 "0:a?",
                 "-c:v",
                 "libx264",
+                # TikTok rejects frame rates outside 23–60 FPS. Re-encoding at
+                # a constant 30 FPS also handles variable-frame-rate phone videos.
+                "-vf",
+                "fps=30",
                 "-preset",
                 "medium",
                 "-crf",
@@ -209,6 +213,14 @@ class ZernioClient:
                 media.append(self.upload_media(prepared))
         platform: dict[str, Any] = {"platform": connection.platform, "accountId": connection.external_id}
         platform_options = delivery.platform_options or {}
+        # A terminal Zernio failure can be explicitly retried by the user. In
+        # that case the API stores a one-use request id internally so that the
+        # corrected media is submitted as a new post instead of returning the
+        # already failed Zernio post for the old idempotency key.
+        request_id = delivery.id
+        retry_request_id = (delivery.provider_response or {}).get("_retry_request_id")
+        if isinstance(retry_request_id, str) and retry_request_id:
+            request_id = retry_request_id
         # TikTok settings are a documented top-level exception. Passing a
         # nested `tiktokSettings` in platformSpecificData is ignored by Zernio
         # and risks confusing future API versions.
@@ -233,7 +245,7 @@ class ZernioClient:
             "POST",
             "/posts",
             json=payload,
-            headers={**self.headers, "x-request-id": delivery.id},
+            headers={**self.headers, "x-request-id": request_id},
         )
         return PublishResult(response)
 

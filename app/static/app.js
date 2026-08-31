@@ -99,6 +99,9 @@ function renderPosts(posts) {
         text: `${destination} · ${statusNames[delivery.status] || delivery.status} · попыток: ${delivery.attempts}`,
       });
       deliveryList.append(label);
+      if (delivery.error) {
+        deliveryList.append(node("small", { class: "delivery-error", text: delivery.error }));
+      }
       if (delivery.status === "failed" || delivery.status === "unknown") {
         const retry = node("button", { class: "secondary", type: "button", text: "Повторить" });
         retry.addEventListener("click", async () => {

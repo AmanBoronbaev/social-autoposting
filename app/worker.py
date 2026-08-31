@@ -139,7 +139,10 @@ def process_delivery(delivery_id: str) -> None:
                 return
             if zernio_status in {"failed", "partial"}:
                 delivery.status = "failed"
-                delivery.error = f"Zernio finished with status: {zernio_status}"
+                detail = zernio_failure_reason(result.payload)
+                delivery.error = (
+                    f"Zernio finished with status: {zernio_status}{f': {detail}' if detail else ''}"
+                )[:2000]
                 delivery.locked_at = None
                 session.commit()
                 logger.warning("delivery %s failed in Zernio: %s", delivery.id, zernio_status)
@@ -167,6 +170,47 @@ def zernio_post_status(payload: dict) -> str | None:
     post = payload.get("post")
     status = post.get("status") if isinstance(post, dict) else None
     return status if isinstance(status, str) else None
+
+
+def zernio_failure_reason(payload: object) -> str | None:
+    """Extract the useful platform rejection text from Zernio's status JSON.
+
+    Zernio has used both top-level and per-platform error shapes. Keep the
+    original response for investigation, while surfacing only a short textual
+    reason in delivery history instead of the unhelpful plain "failed".
+    """
+    detail_keys = ("error", "errorMessage", "failureReason", "reason", "detail", "message")
+    nested_keys = ("post", "platforms", "platformResults", "results", "destinations", "errors")
+
+    def find(value: object, depth: int = 0) -> str | None:
+        if depth > 5:
+            return None
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+        if isinstance(value, list):
+            for item in value:
+                found = find(item, depth + 1)
+                if found:
+                    return found
+            return None
+        if not isinstance(value, dict):
+            return None
+        for key in detail_keys:
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+            if isinstance(item, dict):
+                nested = find(item, depth + 1)
+                if nested:
+                    return nested
+        for key in nested_keys:
+            found = find(value.get(key), depth + 1)
+            if found:
+                return found
+        return None
+
+    return find(payload)
 
 
 def recover_zernio_status_checks() -> int:

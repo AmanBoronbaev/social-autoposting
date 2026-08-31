@@ -10,7 +10,7 @@ from app.main import normalized_upload_content_type, post_dict
 from app.models import Attachment, Connection, Delivery, Post, User
 from app.providers import prepared_attachment, publish_whapi
 from app.settings import get_settings
-from app.worker import recover_zernio_status_checks
+from app.worker import recover_zernio_status_checks, zernio_failure_reason
 
 
 def make_attachment(tmp_path: Path, *, content_type: str, name: str, content: bytes) -> Attachment:
@@ -70,8 +70,11 @@ def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -
 
     monkeypatch.setattr("app.providers.shutil.which", lambda _: "/usr/bin/ffmpeg")
 
+    captured: list[str] = []
+
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         del kwargs
+        captured.extend(command)
         Path(command[-1]).write_bytes(b"prepared")
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
@@ -82,6 +85,7 @@ def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -
         assert prepared.content_type == "video/mp4"
         assert prepared.original_name == "camera.mp4"
         assert output.is_file()
+    assert ["-vf", "fps=30"] == captured[captured.index("-vf") : captured.index("-vf") + 2]
     assert not output.exists()
 
 
@@ -146,3 +150,9 @@ def test_recovery_resumes_only_an_already_accepted_zernio_delivery(tmp_path: Pat
     session.expire_all()
     assert session.get(Delivery, accepted.id).status == "provider_processing"
     assert session.get(Delivery, unfinished.id).status == "processing"
+
+
+def test_zernio_failure_reason_supports_nested_platform_error() -> None:
+    assert zernio_failure_reason(
+        {"post": {"platformResults": [{"status": "failed", "error": {"message": "TikTok rejected the media"}}]}}
+    ) == "TikTok rejected the media"

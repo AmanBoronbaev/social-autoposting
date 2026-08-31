@@ -1,4 +1,6 @@
 server_tokens off;
+log_format autoposting_safe '$remote_addr - $status $request_method $body_bytes_sent';
+access_log /var/log/nginx/access.log autoposting_safe;
 limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
 limit_req_status 429;
 

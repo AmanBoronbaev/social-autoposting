@@ -713,10 +713,17 @@ def retry_delivery(delivery_id: str, user: User = Depends(current_user), db: Ses
         raise HTTPException(status_code=404, detail="delivery not found")
     if delivery.status not in {"failed", "unknown"}:
         raise HTTPException(status_code=422, detail="only failed or unknown deliveries can be retried")
+    previous_status = delivery.status
     delivery.status = "queued"
     delivery.available_at = now()
     delivery.locked_at = None
     delivery.error = None
+    # A final Zernio failure is known not to have been published. Submit it as
+    # a fresh Zernio post on manual retry so corrected media is not confused
+    # with the old terminal status. Keep `unknown` deliveries unchanged: they
+    # may have reached the platform before a worker crash and must be checked.
+    if previous_status == "failed" and delivery.connection.provider == "zernio":
+        delivery.provider_response = {"_retry_request_id": uuid4().hex}
     return {"id": delivery.id, "status": delivery.status}
 
 
