@@ -19,7 +19,10 @@ path="$(read_env APP_PATH)"
 compose=(docker compose -f compose.yaml -f compose.prod.yaml)
 certbot_compose=(docker compose --profile tools -f compose.yaml -f compose.prod.yaml)
 "${compose[@]}" config -q
-"${compose[@]}" up -d --build postgres init-media migrate web nginx
+"${compose[@]}" up -d --build postgres init-media migrate web
+# Nginx reads the mounted templates only at container startup. Recreate just
+# this stateless proxy on deploy so template and APP_PATH changes take effect.
+"${compose[@]}" up -d --force-recreate nginx
 
 if ! "${certbot_compose[@]}" run --rm --no-deps --entrypoint sh certbot \
   -c "test -s /etc/letsencrypt/live/${domain}/fullchain.pem"; then
@@ -29,6 +32,9 @@ if ! "${certbot_compose[@]}" run --rm --no-deps --entrypoint sh certbot \
   "${compose[@]}" restart nginx
 fi
 
-"${compose[@]}" up -d worker
+# `worker` has its own Compose image, so it must be rebuilt as well; otherwise
+# provider fixes can reach the web API while the old publishing code keeps
+# running in the worker container.
+"${compose[@]}" up -d --build worker
 "${compose[@]}" ps
 printf 'Open: https://%s%s\n' "$domain" "$path"
