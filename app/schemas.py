@@ -60,6 +60,11 @@ class PostIn(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list, max_length=35)
     scheduled_at: datetime | None = None
     instagram_content_type: Literal["standard", "story"] = "standard"
+    tiktok_cover_attachment_id: str | None = Field(default=None, max_length=36)
+    instagram_cover_attachment_id: str | None = Field(default=None, max_length=36)
+    instagram_audio_id: str | None = Field(default=None, max_length=255)
+    instagram_audio_volume: int = Field(default=100, ge=0, le=100)
+    instagram_video_volume: int = Field(default=100, ge=0, le=100)
     tiktok_settings: TikTokSettingsIn | None = None
 
     @field_validator("connection_ids", "attachment_ids")

@@ -53,8 +53,33 @@
                 <option value="standard">Обычная публикация / Reel / карусель</option>
                 <option value="story">История (Story)</option>
               </select>
-              <small>История требует одно фото или видео и может быть отправлена только в Instagram через Zernio. Instagram не показывает подпись Story и не даёт добавить link sticker через API.</small>
+              <small>История требует одно фото или видео. Instagram не показывает подпись Story и не даёт добавить link sticker через API.</small>
             </label>
+            <fieldset id="instagram-options" class="hidden">
+              <legend>Instagram Reel</legend>
+              <label>Своя обложка Reel
+                <input id="instagram-cover-file" type="file" accept="image/jpeg,image/png">
+                <small>Необязательно. JPG или PNG до 20 МБ. Доступно для одного видео, не для Story и карусели.</small>
+              </label>
+              <div id="instagram-audio-options">
+                <label>Категория аудио
+                  <select id="instagram-audio-type">
+                    <option value="music">Музыка</option>
+                    <option value="original_sound">Оригинальный звук</option>
+                  </select>
+                </label>
+                <label>Поиск музыки или исполнителя
+                  <input id="instagram-audio-query" maxlength="160" placeholder="Например, название трека">
+                </label>
+                <button id="instagram-audio-search" class="secondary" type="button">Найти аудио</button>
+                <label>Выбранное аудио
+                  <select id="instagram-audio-id" disabled><option value="">Сначала выполните поиск</option></select>
+                </label>
+                <label>Громкость музыки, % <input id="instagram-audio-volume" type="number" min="0" max="100" value="100"></label>
+                <label>Громкость исходного видео, % <input id="instagram-video-volume" type="number" min="0" max="100" value="100"></label>
+                <small id="instagram-audio-help">Музыка доступна только для одного Reel-видео. Свой трек можно использовать, заранее добавив его в видео при наличии прав.</small>
+              </div>
+            </fieldset>
             <fieldset id="tiktok-options" class="hidden">
               <legend>TikTok</legend>
               <label>Видимость <select id="tiktok-privacy" disabled></select><small>Обязательно: доступные варианты берутся из TikTok-аккаунта.</small></label>
@@ -67,6 +92,10 @@
               <label class="tiktok-photo-option hidden">Индекс обложки карусели <input id="tiktok-photo-cover-index" type="number" min="0" max="34" placeholder="Необязательно: от 0 до 34"></label>
               <label class="check tiktok-photo-option hidden"><input id="tiktok-auto-music" type="checkbox"> Добавить рекомендованную музыку TikTok к фотокарусели</label>
               <label class="tiktok-video-option hidden">Кадр обложки видео, мс <input id="tiktok-video-cover-timestamp" type="number" min="0" max="600000" placeholder="1000 по умолчанию"></label>
+              <label class="tiktok-video-option hidden">Своя обложка видео
+                <input id="tiktok-cover-file" type="file" accept="image/jpeg,image/png,image/webp">
+                <small>Необязательно. JPG, PNG или WebP до 20 МБ. Своя обложка важнее выбранного кадра.</small>
+              </label>
               <label class="check"><input id="tiktok-consent" type="checkbox" required> Подтверждаю предпросмотр контента и согласие на публикацию в TikTok <em>(обязательно)</em></label>
               <small id="tiktok-help">Для API всегда передаются переключатели комментариев, Duet и Stitch — их можно выключить. Выбор видимости и подтверждение согласия обязательны; остальные параметры необязательны.</small>
             </fieldset>
@@ -90,50 +119,7 @@
           <div id="posts-list" class="list"><span class="muted">Загрузка…</span></div>
         </section>
 
-        <section id="admin" class="page card hidden">
-          <h1>Кабинеты пользователей</h1>
-          <div class="grid two">
-            <form id="user-form" class="form compact">
-              <h2>Создать кабинет</h2>
-              <label>Имя <input id="user-name" maxlength="160"></label>
-              <label>Email <input id="user-email" type="email" required></label>
-              <label>Первичный пароль <input id="user-password" type="password" minlength="12" required autocomplete="new-password"></label>
-              <label class="check"><input id="user-super" type="checkbox"> Дать права суперпользователя</label>
-              <button type="submit">Создать кабинет</button>
-            </form>
-            <form id="admin-credential-form" class="form compact">
-              <h2>Сохранить токен клиента</h2>
-              <label>Пользователь <select id="admin-credential-user" required></select></label>
-              <label>Сервис <select id="admin-credential-provider"><option value="zernio">Zernio</option><option value="telegram">Telegram Bot</option><option value="whapi">WhatsApp / Whapi</option></select></label>
-              <label>Токен клиента
-                <input id="admin-credential-token" type="password" required minlength="10" maxlength="4096" autocomplete="off">
-                <small>Записывается в зашифрованном виде и больше не отображается.</small>
-              </label>
-              <button type="submit">Сохранить токен</button>
-            </form>
-            <form id="admin-connection-form" class="form compact">
-              <h2>Добавить площадку пользователю</h2>
-              <label>Пользователь <select id="admin-connection-user" required></select></label>
-              <label>Сервис <select id="admin-connection-provider"><option value="zernio">Zernio — Instagram / TikTok</option><option value="telegram">Telegram</option><option value="whapi">WhatsApp / Whapi</option></select></label>
-              <label>Площадка <select id="admin-connection-platform" required></select></label>
-              <label>Название <input id="admin-connection-label" required maxlength="160"></label>
-              <label id="admin-zernio-account-field" class="hidden">Аккаунт Zernio
-                <select id="admin-zernio-account" disabled></select>
-                <small>Загружается из подключённых аккаунтов клиента. ID вручную не нужен.</small>
-              </label>
-              <label id="admin-automatic-target-field" class="hidden">Куда публиковать
-                <select id="admin-automatic-target" disabled></select>
-                <small id="admin-automatic-target-help"></small>
-                <button id="admin-refresh-targets" class="secondary" type="button">Обновить список</button>
-              </label>
-              <label id="admin-connection-target-field">Идентификатор назначения <input id="admin-connection-target" required maxlength="255"></label>
-              <button type="submit">Сохранить площадку</button>
-            </form>
-          </div>
-          <p class="muted">Клиент создаёт свои токены Zernio, Telegram Bot и Whapi и передаёт их вам. Сначала сохраните токен клиента, затем выберите площадку из списка. Для Telegram добавьте бота в группу и отправьте команду, либо назначьте его админом канала и опубликуйте тестовый пост; после этого нажмите «Обновить список». Пользователь секреты не видит.</p>
-          <p id="admin-result" class="notice" role="status"></p>
-          <div id="users-list" class="list"></div>
-        </section>
+        <section id="admin" class="page card hidden"></section>
       </section>
     </main>
   </body>

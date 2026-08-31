@@ -25,10 +25,13 @@ from app.security import (
 )
 from app.settings import Settings, get_settings
 
-app = FastAPI(title="Autoposting Platform", version="0.1.0")
+# The cabinet has its own UI.  Do not publish an unauthenticated API catalogue
+# that reveals internal provider-management endpoints.
+app = FastAPI(title="Autoposting Platform", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
 bearer = HTTPBearer(auto_error=False)
 MEDIA_AUDIENCE = "whapi-media"
 STATIC_DIR = Path(__file__).parent / "static"
+ADMIN_ASSETS_DIR = Path(__file__).parent / "admin_assets"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 UPLOAD_CONTENT_TYPES = {
     ".jpg": "image/jpeg",
@@ -111,16 +114,18 @@ def current_superuser(user: User = Depends(current_user)) -> User:
     return user
 
 
-def connection_dict(connection: Connection) -> dict:
-    return {
+def connection_dict(connection: Connection, *, include_provider: bool = True) -> dict:
+    result = {
         "id": connection.id,
-        "provider": connection.provider,
         "platform": connection.platform,
         "label": connection.label,
         "external_id": connection.external_id,
         "status": connection.status,
         "created_at": connection.created_at,
     }
+    if include_provider:
+        result["provider"] = connection.provider
+    return result
 
 
 def credential_dict(credential: ProviderCredential) -> dict:
@@ -175,7 +180,56 @@ def user_dict(user: User) -> dict:
     }
 
 
-def post_dict(post: Post, settings: Settings | None = None) -> dict:
+def public_delivery_error(delivery: Delivery) -> str | None:
+    """Return a useful, provider-neutral error for a customer cabinet.
+
+    Raw delivery errors can contain names and response wording from third-party
+    APIs. Those details stay in the database and are available to a
+    superuser, but must not leak into a customer-facing history.
+    """
+    if delivery.status == "unknown":
+        return "Статус публикации не подтверждён. Проверьте площадку перед повторной отправкой."
+    if delivery.status != "failed":
+        return None
+    error = (delivery.error or "").lower()
+    if "frame rate" in error:
+        return "Видео должно иметь частоту от 23 до 60 кадров в секунду."
+    if "conversion timed out" in error:
+        return "Подготовка видео заняла слишком много времени. Загрузите более короткий файл."
+    if "media file is missing" in error:
+        return "Исходный файл больше недоступен. Загрузите его заново."
+    return "Публикация не выполнена. Проверьте требования выбранной площадки и повторите попытку."
+
+
+def delivery_dict(delivery: Delivery, *, include_internal_details: bool) -> dict:
+    destination: dict | None = None
+    if delivery.connection is not None:
+        destination = {
+            "label": delivery.connection.label,
+            "platform": delivery.connection.platform,
+        }
+        if include_internal_details:
+            destination["provider"] = delivery.connection.provider
+    result = {
+        "id": delivery.id,
+        "connection_id": delivery.connection_id,
+        "status": delivery.status,
+        "attempts": delivery.attempts,
+        "error": delivery.error if include_internal_details else public_delivery_error(delivery),
+        "completed_at": delivery.completed_at,
+        "destination": destination,
+    }
+    if include_internal_details:
+        result["platform_options"] = delivery.platform_options
+    return result
+
+
+def post_dict(
+    post: Post,
+    settings: Settings | None = None,
+    *,
+    include_internal_details: bool = False,
+) -> dict:
     return {
         "id": post.id,
         "content": post.content,
@@ -189,25 +243,10 @@ def post_dict(post: Post, settings: Settings | None = None) -> dict:
                 "media_url": signed_media_url(item, settings) if settings is not None else None,
             }
             for item in post.attachments
+            if (item.role or "media") == "media"
         ],
         "deliveries": [
-            {
-                "id": item.id,
-                "connection_id": item.connection_id,
-                "status": item.status,
-                "attempts": item.attempts,
-                "platform_options": item.platform_options,
-                "error": item.error,
-                "completed_at": item.completed_at,
-                "destination": {
-                    "label": item.connection.label,
-                    "platform": item.connection.platform,
-                    "provider": item.connection.provider,
-                }
-                if item.connection is not None
-                else None,
-            }
-            for item in post.deliveries
+            delivery_dict(item, include_internal_details=include_internal_details) for item in post.deliveries
         ],
     }
 
@@ -215,6 +254,28 @@ def post_dict(post: Post, settings: Settings | None = None) -> dict:
 @app.get("/healthz", tags=["system"])
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/admin/ui", include_in_schema=False)
+def admin_ui(admin: User = Depends(current_superuser)) -> FileResponse:
+    """Serve admin-only markup instead of sending provider details to clients."""
+    del admin
+    return FileResponse(
+        ADMIN_ASSETS_DIR / "admin.html",
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/v1/admin/client.js", include_in_schema=False)
+def admin_client_script(admin: User = Depends(current_superuser)) -> FileResponse:
+    """Serve provider-management code only to authenticated superusers."""
+    del admin
+    return FileResponse(
+        ADMIN_ASSETS_DIR / "admin.js",
+        media_type="text/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/", include_in_schema=False)
@@ -287,7 +348,7 @@ def list_connections(user: User = Depends(current_user), db: Session = Depends(g
     connections = db.scalars(
         select(Connection).where(Connection.user_id == user.id).order_by(Connection.created_at.desc())
     )
-    return [connection_dict(item) for item in connections]
+    return [connection_dict(item, include_provider=user.is_superuser) for item in connections]
 
 
 @app.get("/v1/connections/{connection_id}/tiktok/creator-info", tags=["connections"])
@@ -313,8 +374,18 @@ def get_tiktok_creator_info(
     try:
         api_token = customer_provider_token(user.id, "zernio", db, settings)
         payload = ZernioClient(settings, api_token).get_tiktok_creator_info(connection.external_id, media_type)
-    except ProviderError as error:
-        raise HTTPException(status_code=502, detail=f"could not load TikTok account settings: {error}") from error
+    except HTTPException as error:
+        if user.is_superuser:
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось загрузить настройки TikTok. Попробуйте ещё раз позже.",
+        ) from error
+    except (ProviderError, ValueError) as error:
+        detail = f"could not load TikTok account settings: {error}" if user.is_superuser else (
+            "Не удалось загрузить настройки TikTok. Попробуйте ещё раз позже."
+        )
+        raise HTTPException(status_code=502, detail=detail) from error
 
     privacy_levels = payload.get("privacyLevels")
     if not isinstance(privacy_levels, list):
@@ -356,6 +427,87 @@ def get_tiktok_creator_info(
             if isinstance(item, dict) and isinstance(item.get("value"), str)
         ],
     }
+
+
+def normalized_instagram_audio(payload: dict) -> list[dict[str, str | int | None]]:
+    """Normalize the catalogue response without returning third-party URLs."""
+    candidates: object = None
+    for key in ("audio", "audios", "items", "results", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            candidates = value
+            break
+        if isinstance(value, dict):
+            for nested_key in ("audio", "audios", "items", "results", "data"):
+                nested = value.get(nested_key)
+                if isinstance(nested, list):
+                    candidates = nested
+                    break
+        if candidates is not None:
+            break
+    if not isinstance(candidates, list):
+        return []
+    result: list[dict[str, str | int | None]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        audio_id = item.get("audioId") or item.get("id") or item.get("_id")
+        if not isinstance(audio_id, str) or not audio_id:
+            continue
+        duration = item.get("duration") or item.get("durationSeconds")
+        result.append(
+            {
+                "id": audio_id,
+                "title": str(item.get("title") or item.get("name") or "Без названия"),
+                "artist": str(item.get("artist") or item.get("creator") or ""),
+                "kind": str(item.get("audioType") or item.get("type") or ""),
+                "duration": duration if isinstance(duration, int | float) else None,
+            }
+        )
+    return result
+
+
+@app.get("/v1/connections/{connection_id}/instagram/audio", tags=["connections"])
+def search_instagram_audio(
+    connection_id: str,
+    audio_type: str = "music",
+    q: str = "",
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if audio_type not in {"music", "original_sound"}:
+        raise HTTPException(status_code=422, detail="Тип аудио указан неверно.")
+    if len(q) > 160:
+        raise HTTPException(status_code=422, detail="Поисковый запрос слишком длинный.")
+    connection = db.scalar(
+        select(Connection).where(
+            Connection.id == connection_id,
+            Connection.user_id == user.id,
+            Connection.provider == "zernio",
+            Connection.platform == "instagram",
+        )
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Instagram-площадка не найдена.")
+    try:
+        api_token = customer_provider_token(user.id, "zernio", db, settings)
+        payload = ZernioClient(settings, api_token).search_instagram_audio(
+            connection.external_id, audio_type=audio_type, query=q
+        )
+    except HTTPException as error:
+        if user.is_superuser:
+            raise
+        raise HTTPException(
+            status_code=502,
+            detail="Музыка сейчас недоступна для этой Instagram-площадки. Проверьте её подключение.",
+        ) from error
+    except (ProviderError, ValueError) as error:
+        detail = f"could not load Instagram audio: {error}" if user.is_superuser else (
+            "Музыка сейчас недоступна для этой Instagram-площадки. Проверьте её подключение."
+        )
+        raise HTTPException(status_code=502, detail=detail) from error
+    return {"tracks": normalized_instagram_audio(payload)}
 
 
 @app.get("/v1/admin/users/{user_id}/connections", tags=["admin"])
@@ -599,11 +751,34 @@ def create_post(
                 Attachment.id.in_(payload.attachment_ids),
                 Attachment.user_id == user.id,
                 Attachment.post_id.is_(None),
+                Attachment.role == "media",
             )
         )
     )
     if len(attachments) != len(payload.attachment_ids):
         raise HTTPException(status_code=404, detail="one or more uploads were not found or already used")
+    cover_ids = {
+        attachment_id
+        for attachment_id in (payload.tiktok_cover_attachment_id, payload.instagram_cover_attachment_id)
+        if attachment_id
+    }
+    if cover_ids.intersection(payload.attachment_ids):
+        raise HTTPException(status_code=422, detail="an image cannot be both post media and a custom cover")
+    cover_attachments = list(
+        db.scalars(
+            select(Attachment).where(
+                Attachment.id.in_(cover_ids),
+                Attachment.user_id == user.id,
+                Attachment.post_id.is_(None),
+                Attachment.role == "media",
+            )
+        )
+    )
+    if len(cover_attachments) != len(cover_ids):
+        raise HTTPException(status_code=404, detail="one or more custom cover uploads were not found or already used")
+    covers_by_id = {item.id: item for item in cover_attachments}
+    tiktok_cover = covers_by_id.get(payload.tiktok_cover_attachment_id or "")
+    instagram_cover = covers_by_id.get(payload.instagram_cover_attachment_id or "")
     if any(item.provider == "zernio" for item in connections) and any(
         not (attachment.content_type.startswith("image/") or attachment.content_type.startswith("video/"))
         for attachment in attachments
@@ -623,8 +798,10 @@ def create_post(
         ):
             raise HTTPException(status_code=422, detail="an Instagram story accepts exactly one image or video")
         if any(item.provider != "zernio" or item.platform != "instagram" for item in connections):
-            raise HTTPException(status_code=422, detail="an Instagram story can target only Zernio Instagram accounts")
+            raise HTTPException(status_code=422, detail="an Instagram story can target only Instagram accounts")
     tiktok_connections = [item for item in connections if item.provider == "zernio" and item.platform == "tiktok"]
+    is_video = bool(attachments) and all(item.content_type.startswith("video/") for item in attachments)
+    is_photo = bool(attachments) and all(item.content_type.startswith("image/") for item in attachments)
     if tiktok_connections:
         if len(tiktok_connections) > 1:
             raise HTTPException(status_code=422, detail="select only one TikTok account per post")
@@ -634,17 +811,46 @@ def create_post(
             raise HTTPException(status_code=422, detail="TikTok confirmations are required")
         if not attachments:
             raise HTTPException(status_code=422, detail="a TikTok post needs an image or video")
-        is_video = all(item.content_type.startswith("video/") for item in attachments)
-        is_photo = all(item.content_type.startswith("image/") for item in attachments)
         if not is_video and not is_photo:
             raise HTTPException(status_code=422, detail="TikTok accepts either images or one video, not mixed files")
         if is_video and len(attachments) != 1:
             raise HTTPException(status_code=422, detail="a TikTok post accepts exactly one video")
+    if tiktok_cover is not None:
+        if not tiktok_connections:
+            raise HTTPException(status_code=422, detail="a TikTok cover requires a TikTok destination")
+        if not is_video:
+            raise HTTPException(status_code=422, detail="a TikTok custom cover requires exactly one video")
+        if tiktok_cover.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise HTTPException(status_code=422, detail="a TikTok cover must be a JPG, PNG or WebP image")
+        if tiktok_cover.size_bytes > 20 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="a TikTok cover must not exceed 20 MB")
+    single_instagram_video = (
+        len(attachments) == 1 and attachments[0].content_type.startswith("video/") and not story
+    )
+    if instagram_cover is not None:
+        if not instagram_connections:
+            raise HTTPException(status_code=422, detail="an Instagram cover requires an Instagram destination")
+        if not single_instagram_video:
+            raise HTTPException(status_code=422, detail="an Instagram custom cover requires one Reel video")
+        if instagram_cover.content_type not in {"image/jpeg", "image/png"}:
+            raise HTTPException(status_code=422, detail="an Instagram cover must be a JPG or PNG image")
+        if instagram_cover.size_bytes > 20 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="an Instagram cover must not exceed 20 MB")
+    instagram_audio_id = (payload.instagram_audio_id or "").strip()
+    if instagram_audio_id:
+        if len(instagram_connections) != 1:
+            raise HTTPException(status_code=422, detail="music can be selected for one Instagram destination at a time")
+        if not single_instagram_video:
+            raise HTTPException(status_code=422, detail="Instagram music is available only for one Reel video")
     post = Post(user_id=user.id, content=payload.content, scheduled_at=scheduled_at)
     db.add(post)
     db.flush()
     for attachment in attachments:
         attachment.post_id = post.id
+        attachment.role = "media"
+    for attachment in cover_attachments:
+        attachment.post_id = post.id
+        attachment.role = "cover"
     for connection in connections:
         platform_options = {"contentType": "story"} if story else {}
         if connection.platform == "tiktok" and payload.tiktok_settings is not None:
@@ -652,7 +858,18 @@ def create_post(
             tiktok_settings["media_type"] = "video" if is_video else "photo"
             if is_photo:
                 tiktok_settings["description"] = payload.content
+            if tiktok_cover is not None:
+                tiktok_settings["video_cover_attachment_id"] = tiktok_cover.id
             platform_options["tiktokSettings"] = tiktok_settings
+        if connection.platform == "instagram":
+            if instagram_cover is not None:
+                platform_options["instagramThumbnailAttachmentId"] = instagram_cover.id
+            if instagram_audio_id:
+                platform_options["audioConfiguration"] = {
+                    "audioId": instagram_audio_id,
+                    "audioVolume": payload.instagram_audio_volume,
+                    "videoVolume": payload.instagram_video_volume,
+                }
         db.add(
             Delivery(
                 post_id=post.id,
@@ -668,7 +885,7 @@ def create_post(
         .where(Post.id == post.id)
     )
     assert post is not None
-    return post_dict(post, settings)
+    return post_dict(post, settings, include_internal_details=user.is_superuser)
 
 
 @app.get("/v1/posts/{post_id}", tags=["posts"])
@@ -685,7 +902,7 @@ def get_post(
     )
     if post is None:
         raise HTTPException(status_code=404, detail="post not found")
-    return post_dict(post, settings)
+    return post_dict(post, settings, include_internal_details=user.is_superuser)
 
 
 @app.get("/v1/posts", tags=["posts"])
@@ -701,7 +918,7 @@ def list_posts(
         .order_by(Post.scheduled_at.desc())
         .limit(100)
     )
-    return [post_dict(item, settings) for item in posts]
+    return [post_dict(item, settings, include_internal_details=user.is_superuser) for item in posts]
 
 
 @app.post("/v1/deliveries/{delivery_id}/retry", tags=["posts"])

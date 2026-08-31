@@ -86,6 +86,9 @@ class Attachment(Timestamped, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id", ondelete="SET NULL"), index=True)
+    # A cover is stored with its post but must never become a post media item.
+    # Existing rows default to ``media`` during the additive database upgrade.
+    role: Mapped[str] = mapped_column(String(16), default="media", server_default="media", index=True)
     original_name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(255))
     size_bytes: Mapped[int] = mapped_column(Integer)

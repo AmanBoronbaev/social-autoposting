@@ -1,7 +1,13 @@
 import httpx
 
 from app.models import Attachment, Connection, Post
-from app.providers import TELEGRAM_DISCOVERY_UPDATE_TYPES, WhapiClient, list_telegram_targets, publish_whapi
+from app.providers import (
+    TELEGRAM_DISCOVERY_UPDATE_TYPES,
+    WhapiClient,
+    ZernioClient,
+    list_telegram_targets,
+    publish_whapi,
+)
 from app.settings import get_settings
 
 
@@ -117,3 +123,23 @@ def test_whapi_sends_local_media_as_base64_not_a_public_link(monkeypatch, tmp_pa
         "caption": "Caption",
         "media": "data:image/png;name=picture.png;base64,cG5nIGJ5dGVz",
     }
+
+
+def test_instagram_audio_search_uses_account_scoped_catalog(monkeypatch) -> None:
+    client = ZernioClient(get_settings(), "test-token")
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((method, path, kwargs))
+        return {"audio": []}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.search_instagram_audio("instagram-account", audio_type="music", query="track") == {"audio": []}
+    assert calls == [
+        (
+            "GET",
+            "/accounts/instagram-account/instagram/audio",
+            {"params": {"audioType": "music", "q": "track"}},
+        )
+    ]

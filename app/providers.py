@@ -35,6 +35,18 @@ class PreparedAttachment:
     original_name: str
 
 
+def post_media_attachments(post: Post) -> list[Attachment]:
+    """Return publication media, excluding images saved only as custom covers."""
+    return [item for item in post.attachments if (item.role or "media") == "media"]
+
+
+def post_cover_attachment(post: Post, attachment_id: str) -> Attachment:
+    for item in post.attachments:
+        if item.id == attachment_id and item.role == "cover":
+            return item
+    raise ProviderError("custom cover image is missing")
+
+
 def attachment_path(attachment: Attachment, settings: Settings) -> Path:
     candidate = (settings.media_dir / attachment.storage_key).resolve()
     root = settings.media_dir.resolve()
@@ -206,13 +218,25 @@ class ZernioClient:
             params={"mediaType": media_type},
         )
 
+    def search_instagram_audio(
+        self, account_id: str, *, audio_type: str = "music", query: str | None = None
+    ) -> dict[str, Any]:
+        if not account_id:
+            raise ProviderError("Instagram account ID is missing")
+        if audio_type not in {"music", "original_sound"}:
+            raise ProviderError("Instagram audio type is invalid")
+        params: dict[str, str] = {"audioType": audio_type}
+        if query and query.strip():
+            params["q"] = query.strip()
+        return self._request("GET", f"/accounts/{account_id}/instagram/audio", params=params)
+
     def publish(self, delivery: Delivery, post: Post, connection: Connection) -> PublishResult:
         media = []
-        for item in post.attachments:
+        for item in post_media_attachments(post):
             with prepared_attachment(item, self.settings) as prepared:
                 media.append(self.upload_media(prepared))
         platform: dict[str, Any] = {"platform": connection.platform, "accountId": connection.external_id}
-        platform_options = delivery.platform_options or {}
+        platform_options = dict(delivery.platform_options or {})
         # A terminal Zernio failure can be explicitly retried by the user. In
         # that case the API stores a one-use request id internally so that the
         # corrected media is submitted as a new post instead of returning the
@@ -224,21 +248,33 @@ class ZernioClient:
         # TikTok settings are a documented top-level exception. Passing a
         # nested `tiktokSettings` in platformSpecificData is ignored by Zernio
         # and risks confusing future API versions.
-        platform_specific_data = {
-            key: value for key, value in platform_options.items() if key != "tiktokSettings"
-        }
-        if platform_specific_data:
-            platform["platformSpecificData"] = platform_specific_data
         payload: dict[str, Any] = {
             "content": post.content,
             "platforms": [platform],
             "publishNow": True,
         }
         if connection.platform == "tiktok":
-            tiktok_settings = platform_options.get("tiktokSettings")
-            if not isinstance(tiktok_settings, dict):
+            raw_tiktok_settings = platform_options.get("tiktokSettings")
+            if not isinstance(raw_tiktok_settings, dict):
                 raise ProviderError("TikTok publication needs confirmed TikTok settings")
+            tiktok_settings = dict(raw_tiktok_settings)
+            cover_attachment_id = tiktok_settings.pop("video_cover_attachment_id", None)
+            if isinstance(cover_attachment_id, str) and cover_attachment_id:
+                cover = post_cover_attachment(post, cover_attachment_id)
+                with prepared_attachment(cover, self.settings) as prepared_cover:
+                    tiktok_settings["video_cover_image_url"] = self.upload_media(prepared_cover)["url"]
             payload["tiktokSettings"] = tiktok_settings
+        if connection.platform == "instagram":
+            cover_attachment_id = platform_options.pop("instagramThumbnailAttachmentId", None)
+            if isinstance(cover_attachment_id, str) and cover_attachment_id:
+                cover = post_cover_attachment(post, cover_attachment_id)
+                with prepared_attachment(cover, self.settings) as prepared_cover:
+                    platform_options["instagramThumbnail"] = self.upload_media(prepared_cover)["url"]
+        platform_specific_data = {
+            key: value for key, value in platform_options.items() if key != "tiktokSettings"
+        }
+        if platform_specific_data:
+            platform["platformSpecificData"] = platform_specific_data
         if media:
             payload["mediaItems"] = media
         response = self._request(
@@ -401,16 +437,17 @@ def publish_telegram(post: Post, connection: Connection, settings: Settings, bot
         raise ProviderError("Telegram bot token is missing for this customer")
     base = str(settings.telegram_api_base_url).rstrip("/")
     result: list[dict[str, Any]] = []
+    attachments = post_media_attachments(post)
     try:
         with httpx.Client(timeout=180) as client:
-            if not post.attachments:
+            if not attachments:
                 response = client.post(
                     f"{base}/bot{bot_token}/sendMessage",
                     json={"chat_id": connection.external_id, "text": post.content},
                 )
                 result.append(_response_json(response, bot_token))
             else:
-                for index, attachment in enumerate(post.attachments):
+                for index, attachment in enumerate(attachments):
                     with prepared_attachment(attachment, settings) as prepared:
                         if prepared.path.stat().st_size > settings.telegram_max_upload_bytes:
                             raise ProviderError("Telegram attachment exceeds configured upload limit")
@@ -457,9 +494,10 @@ def publish_whapi(
         raise ProviderError("Whapi token is missing for this customer")
     result: list[dict[str, Any]] = []
     headers = {"Authorization": f"Bearer {api_token}"}
+    attachments = post_media_attachments(post)
     try:
         with httpx.Client(timeout=180) as client:
-            if not post.attachments:
+            if not attachments:
                 response = client.post(
                     "https://gate.whapi.cloud/messages/text",
                     headers=headers,
@@ -467,7 +505,7 @@ def publish_whapi(
                 )
                 result.append(_response_json(response, api_token))
             else:
-                for index, attachment in enumerate(post.attachments):
+                for index, attachment in enumerate(attachments):
                     with prepared_attachment(attachment, settings) as prepared:
                         payload = {
                             "to": connection.external_id,

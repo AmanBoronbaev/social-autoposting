@@ -15,6 +15,12 @@ def main() -> None:
     if "platform_options" not in columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE deliveries ADD COLUMN platform_options JSON"))
+    attachment_columns = {column["name"] for column in inspect(engine).get_columns("attachments")}
+    if "role" not in attachment_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE attachments ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'media'")
+            )
     settings = get_settings()
     if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
         return

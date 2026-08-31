@@ -1,0 +1,42 @@
+<h1>Кабинеты пользователей</h1>
+<div class="grid two">
+  <form id="user-form" class="form compact">
+    <h2>Создать кабинет</h2>
+    <label>Имя <input id="user-name" maxlength="160"></label>
+    <label>Email <input id="user-email" type="email" required></label>
+    <label>Первичный пароль <input id="user-password" type="password" minlength="12" required autocomplete="new-password"></label>
+    <label class="check"><input id="user-super" type="checkbox"> Дать права суперпользователя</label>
+    <button type="submit">Создать кабинет</button>
+  </form>
+  <form id="admin-credential-form" class="form compact">
+    <h2>Сохранить токен клиента</h2>
+    <label>Пользователь <select id="admin-credential-user" required></select></label>
+    <label>Сервис <select id="admin-credential-provider"><option value="zernio">Zernio</option><option value="telegram">Telegram Bot</option><option value="whapi">WhatsApp / Whapi</option></select></label>
+    <label>Токен клиента
+      <input id="admin-credential-token" type="password" required minlength="10" maxlength="4096" autocomplete="off">
+      <small>Записывается в зашифрованном виде и больше не отображается.</small>
+    </label>
+    <button type="submit">Сохранить токен</button>
+  </form>
+  <form id="admin-connection-form" class="form compact">
+    <h2>Добавить площадку пользователю</h2>
+    <label>Пользователь <select id="admin-connection-user" required></select></label>
+    <label>Сервис <select id="admin-connection-provider"><option value="zernio">Zernio — Instagram / TikTok</option><option value="telegram">Telegram</option><option value="whapi">WhatsApp / Whapi</option></select></label>
+    <label>Площадка <select id="admin-connection-platform" required></select></label>
+    <label>Название <input id="admin-connection-label" required maxlength="160"></label>
+    <label id="admin-zernio-account-field" class="hidden">Аккаунт Zernio
+      <select id="admin-zernio-account" disabled></select>
+      <small>Загружается из подключённых аккаунтов клиента. ID вручную не нужен.</small>
+    </label>
+    <label id="admin-automatic-target-field" class="hidden">Куда публиковать
+      <select id="admin-automatic-target" disabled></select>
+      <small id="admin-automatic-target-help"></small>
+      <button id="admin-refresh-targets" class="secondary" type="button">Обновить список</button>
+    </label>
+    <label id="admin-connection-target-field">Идентификатор назначения <input id="admin-connection-target" required maxlength="255"></label>
+    <button type="submit">Сохранить площадку</button>
+  </form>
+</div>
+<p class="muted">Клиент создаёт свои токены и передаёт их вам. Сначала сохраните токен клиента, затем выберите площадку из списка. Для Telegram добавьте бота в группу и отправьте команду, либо назначьте его админом канала и опубликуйте тестовый пост; после этого нажмите «Обновить список». Пользователь секреты не видит.</p>
+<p id="admin-result" class="notice" role="status"></p>
+<div id="users-list" class="list"></div>

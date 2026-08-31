@@ -1,5 +1,7 @@
-const state = { token: sessionStorage.getItem("access_token"), me: null, connections: [], users: [] };
+const state = { token: sessionStorage.getItem("access_token"), me: null, connections: [] };
 let tiktokConnectionId = null;
+let instagramAudioConnectionId = null;
+let adminUiLoaded = false;
 const appBasePath = new URL("./", document.baseURI).pathname.replace(/\/$/, "");
 
 const $ = (selector) => document.querySelector(selector);
@@ -24,12 +26,15 @@ function errorText(payload) {
 }
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+  const { responseType = "json", ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const resolvedPath = `${appBasePath}/${path.replace(/^\//, "")}`.replace(/^\/{2,}/, "/");
-  const response = await fetch(resolvedPath, { ...options, headers });
-  const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
+  const response = await fetch(resolvedPath, { ...fetchOptions, headers });
+  const payload = response.status === 204
+    ? null
+    : responseType === "text" ? await response.text() : await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(errorText(payload));
   return payload;
 }
@@ -71,7 +76,7 @@ function renderConnections() {
     targets.append(node("label", { class: "target" }, [checkbox, text(connection.label), node("small", { text: connection.platform })]));
   });
   if (!targets.childElementCount) targets.append(node("span", { class: "muted", text: "Сначала добавьте площадку." }));
-  void updateTikTokOptions();
+  void updatePostPlatformOptions();
 }
 
 function formatDate(value) {
@@ -134,39 +139,44 @@ function renderPosts(posts) {
   });
 }
 
-function renderUsers() {
-  const list = $("#users-list");
-  const connectionSelect = $("#admin-connection-user");
-  const credentialSelect = $("#admin-credential-user");
-  clear(list); clear(connectionSelect); clear(credentialSelect);
-  state.users.forEach((user) => {
-    const option = { value: user.id, text: `${user.display_name || user.email} — ${user.email}` };
-    connectionSelect.append(node("option", option));
-    credentialSelect.append(node("option", option));
-    list.append(node("article", { class: "item" }, [
-      node("div", { class: "item-head" }, [node("strong", { text: user.display_name || user.email }), node("span", { class: "pill", text: user.is_superuser ? "суперпользователь" : "пользователь" })]),
-      node("span", { class: "muted", text: user.email }),
-      node("small", { text: user.is_active ? "Активен" : "Отключён" }),
-    ]));
-  });
-  updateAdminConnectionFields();
-}
-
 async function refreshPosts() { renderPosts(await api("/v1/posts")); }
 async function refreshConnections() { state.connections = await api("/v1/connections"); renderConnections(); }
-async function refreshUsers() { state.users = await api("/v1/admin/users"); renderUsers(); }
+
+window.Autoposting = { state, $, clear, node, api, setNotice };
+
+async function loadAdminUi() {
+  if (adminUiLoaded) return;
+  $("#admin").innerHTML = await api("/v1/admin/ui", { responseType: "text" });
+  const source = await api("/v1/admin/client.js", { responseType: "text" });
+  const moduleUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  try {
+    await import(moduleUrl);
+  } finally {
+    URL.revokeObjectURL(moduleUrl);
+  }
+  adminUiLoaded = true;
+}
 
 async function refreshDashboard() {
   state.me = await api("/v1/me");
   $("#identity").textContent = state.me.display_name || state.me.email;
   $("#admin-tab").classList.toggle("hidden", !state.me.is_superuser);
   await Promise.all([refreshConnections(), refreshPosts()]);
-  if (state.me.is_superuser) await refreshUsers();
+  if (state.me.is_superuser) await loadAdminUi();
 }
 
 function selectedTikTokConnection() {
-  const selected = [...document.querySelectorAll("input[name=connection]:checked")].map((item) => item.value);
+  const selected = selectedConnectionIds();
   return state.connections.find((connection) => selected.includes(connection.id) && connection.platform === "tiktok");
+}
+
+function selectedConnectionIds() {
+  return [...document.querySelectorAll("input[name=connection]:checked")].map((item) => item.value);
+}
+
+function selectedInstagramConnections() {
+  const selected = selectedConnectionIds();
+  return state.connections.filter((connection) => selected.includes(connection.id) && connection.platform === "instagram");
 }
 
 function isVideoFile(file) {
@@ -211,8 +221,91 @@ async function updateTikTokOptions() {
   }
 }
 
-$("#post-targets").addEventListener("change", () => void updateTikTokOptions());
-$("#post-files").addEventListener("change", () => { tiktokConnectionId = null; void updateTikTokOptions(); });
+function hasSingleInstagramReelVideo() {
+  const files = [...$("#post-files").files];
+  return $("#instagram-content-type").value === "standard" && files.length === 1 && isVideoFile(files[0]);
+}
+
+function resetInstagramAudioSelect(message = "Сначала выполните поиск") {
+  const select = $("#instagram-audio-id");
+  clear(select);
+  select.append(node("option", { value: "", text: message }));
+  select.disabled = true;
+}
+
+function updateInstagramOptions() {
+  const fieldset = $("#instagram-options");
+  const selected = selectedInstagramConnections();
+  const isReelVideo = hasSingleInstagramReelVideo();
+  fieldset.classList.toggle("hidden", !selected.length || !isReelVideo);
+  const audioOptions = $("#instagram-audio-options");
+  const audioAvailable = selected.length === 1 && isReelVideo;
+  audioOptions.classList.toggle("hidden", !audioAvailable);
+  if (!audioAvailable) {
+    instagramAudioConnectionId = null;
+    resetInstagramAudioSelect("Музыка доступна для одного Reel-видео");
+  } else if (instagramAudioConnectionId !== selected[0].id) {
+    instagramAudioConnectionId = selected[0].id;
+    resetInstagramAudioSelect();
+  }
+}
+
+async function loadInstagramAudio() {
+  const [selected] = selectedInstagramConnections();
+  if (!selected || !hasSingleInstagramReelVideo()) {
+    setNotice("#post-result", "Выберите одну Instagram-площадку и загрузите одно Reel-видео.", true);
+    return;
+  }
+  const button = $("#instagram-audio-search");
+  button.disabled = true;
+  $("#instagram-audio-help").textContent = "Ищем доступное аудио…";
+  try {
+    const params = new URLSearchParams({
+      audio_type: $("#instagram-audio-type").value,
+      q: $("#instagram-audio-query").value.trim(),
+    });
+    const result = await api(`/v1/connections/${selected.id}/instagram/audio?${params.toString()}`);
+    if (selected.id !== selectedInstagramConnections()[0]?.id) return;
+    const tracks = Array.isArray(result.tracks) ? result.tracks : [];
+    const select = $("#instagram-audio-id");
+    clear(select);
+    select.append(node("option", { value: "", text: "Без музыки из каталога" }));
+    tracks.forEach((track) => {
+      const duration = typeof track.duration === "number" ? ` · ${Math.round(track.duration)} сек.` : "";
+      const artist = track.artist ? ` — ${track.artist}` : "";
+      select.append(node("option", { value: track.id, text: `${track.title}${artist}${duration}` }));
+    });
+    select.disabled = false;
+    $("#instagram-audio-help").textContent = tracks.length
+      ? `Найдено вариантов: ${tracks.length}. Выберите один или оставьте «Без музыки».`
+      : "Ничего не найдено. Попробуйте другое название или исполнителя.";
+  } catch (error) {
+    resetInstagramAudioSelect("Аудио недоступно");
+    $("#instagram-audio-help").textContent = error.message;
+    setNotice("#post-result", error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function updatePostPlatformOptions() {
+  await Promise.all([updateTikTokOptions(), Promise.resolve(updateInstagramOptions())]);
+}
+
+$("#post-targets").addEventListener("change", () => void updatePostPlatformOptions());
+$("#post-files").addEventListener("change", () => {
+  tiktokConnectionId = null;
+  instagramAudioConnectionId = null;
+  void updatePostPlatformOptions();
+});
+$("#instagram-content-type").addEventListener("change", () => void updateInstagramOptions());
+$("#instagram-audio-search").addEventListener("click", () => void loadInstagramAudio());
+
+async function uploadFile(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return api("/v1/uploads", { method: "POST", body: form });
+}
 
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -227,150 +320,44 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 $("#logout").addEventListener("click", () => {
-  state.token = null; state.me = null; sessionStorage.removeItem("access_token"); showLoggedIn(false); $("#identity").textContent = "";
+  state.token = null; state.me = null; sessionStorage.removeItem("access_token");
+  adminUiLoaded = false; $("#admin").replaceChildren(); $("#admin-tab").classList.add("hidden");
+  showLoggedIn(false); $("#identity").textContent = "";
 });
 
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => showPage(tab.dataset.page)));
 
-function updateAdminConnectionFields() {
-  const provider = $("#admin-connection-provider").value;
-  const platform = $("#admin-connection-platform");
-  const options = provider === "zernio"
-    ? [["instagram", "Instagram"], ["tiktok", "TikTok"]]
-    : provider === "telegram" ? [["telegram", "Telegram"]] : [["whatsapp", "WhatsApp"]];
-  clear(platform);
-  options.forEach(([value, label]) => platform.append(node("option", { value, text: label })));
-  const isZernio = provider === "zernio";
-  const usesAutomaticTargets = provider === "telegram" || provider === "whapi";
-  $("#admin-zernio-account-field").classList.toggle("hidden", !isZernio);
-  $("#admin-automatic-target-field").classList.toggle("hidden", !usesAutomaticTargets);
-  $("#admin-connection-target-field").classList.toggle("hidden", isZernio || usesAutomaticTargets);
-  $("#admin-zernio-account").required = isZernio;
-  $("#admin-automatic-target").required = usesAutomaticTargets;
-  $("#admin-connection-target").required = !isZernio && !usesAutomaticTargets;
-  $("#admin-connection-target").placeholder = provider === "whapi" ? "123…@g.us или …@newsletter" : "@channel или -100…";
-  if (isZernio) void loadZernioAccounts();
-  if (usesAutomaticTargets) void loadAutomaticTargets();
-}
-
-$("#admin-connection-provider").addEventListener("change", updateAdminConnectionFields);
-$("#admin-connection-user").addEventListener("change", () => {
-  const provider = $("#admin-connection-provider").value;
-  if (provider === "zernio") void loadZernioAccounts();
-  if (provider === "telegram" || provider === "whapi") void loadAutomaticTargets();
-});
-$("#admin-connection-platform").addEventListener("change", () => { if ($("#admin-connection-provider").value === "zernio") void loadZernioAccounts(); });
-$("#admin-refresh-targets").addEventListener("click", () => void loadAutomaticTargets());
-$("#admin-automatic-target").addEventListener("change", (event) => {
-  if (!$("#admin-connection-label").value) $("#admin-connection-label").value = event.target.selectedOptions[0]?.dataset.label || "";
-});
-updateAdminConnectionFields();
-
-async function loadZernioAccounts() {
-  const select = $("#admin-zernio-account");
-  const userId = $("#admin-connection-user").value;
-  const platform = $("#admin-connection-platform").value;
-  clear(select);
-  select.disabled = true;
-  if (!userId || !platform) return;
-  select.append(node("option", { text: "Загрузка аккаунтов…" }));
-  try {
-    const accounts = await api(`/v1/admin/users/${userId}/zernio/accounts`);
-    const matching = accounts.filter((account) => account.platform === platform && account.status === "connected");
-    clear(select);
-    if (!matching.length) {
-      select.append(node("option", { text: "Нет подключённых аккаунтов" }));
-      setNotice("#admin-result", "Сначала сохраните токен клиента и подключите его аккаунт в Zernio.", true);
-      return;
-    }
-    matching.forEach((account) => {
-      const detail = [account.display_name, account.username, account.profile_name].filter(Boolean).join(" · ");
-      select.append(node("option", { value: account.id, text: detail }));
-    });
-    if (!$("#admin-connection-label").value) $("#admin-connection-label").value = matching[0].display_name;
-  } catch (error) {
-    clear(select);
-    select.append(node("option", { text: "Не удалось загрузить аккаунты" }));
-    setNotice("#admin-result", error.message, true);
-  } finally {
-    select.disabled = !select.querySelector("option[value]");
-  }
-}
-
-function automaticTargetInfo(provider) {
-  if (provider === "whapi") return {
-    path: "whapi/targets",
-    loading: "Загрузка групп и каналов WhatsApp…",
-    empty: "Нет доступных групп или каналов WhatsApp.",
-    help: "ID не нужен: отображаются группы и каналы, доступные по токену Whapi.",
-  };
-  return {
-    path: "telegram/targets",
-    loading: "Поиск чатов Telegram…",
-    empty: "Приём включён, но новых чатов пока нет.",
-    help: "Сначала нажмите «Обновить список» — это включает приём постов. Затем опубликуйте НОВЫЙ тестовый пост и нажмите кнопку ещё раз. Если канал не появился, перешлите любой его пост боту в личку после Start и обновите список.",
-  };
-}
-
-async function loadAutomaticTargets() {
-  const provider = $("#admin-connection-provider").value;
-  if (provider !== "telegram" && provider !== "whapi") return;
-  const userId = $("#admin-connection-user").value;
-  const select = $("#admin-automatic-target");
-  const help = $("#admin-automatic-target-help");
-  const info = automaticTargetInfo(provider);
-  clear(select); select.disabled = true; help.textContent = info.help;
-  if (!userId) return;
-  select.append(node("option", { text: info.loading }));
-  try {
-    const targets = await api(`/v1/admin/users/${userId}/${info.path}`);
-    if (provider !== $("#admin-connection-provider").value || userId !== $("#admin-connection-user").value) return;
-    clear(select);
-    if (!targets.length) {
-      select.append(node("option", { text: info.empty }));
-      return;
-    }
-    targets.forEach((target) => {
-      const kind = target.kind === "channel" ? "канал" : "группа";
-      select.append(node("option", { value: target.id, text: `${target.label} · ${kind}`, "data-label": target.label }));
-    });
-    if (!$("#admin-connection-label").value) $("#admin-connection-label").value = targets[0].label;
-  } catch (error) {
-    clear(select); select.append(node("option", { text: "Не удалось загрузить список" }));
-    setNotice("#admin-result", error.message, true);
-  } finally {
-    select.disabled = !select.querySelector("option[value]");
-  }
-}
-
-function updateAdminCredentialFields() {
-  const provider = $("#admin-credential-provider").value;
-  $("#admin-credential-token").placeholder = provider === "zernio"
-    ? "Zernio API key" : provider === "telegram" ? "Telegram Bot token" : "Whapi token";
-}
-
-$("#admin-credential-provider").addEventListener("change", updateAdminCredentialFields);
-updateAdminCredentialFields();
-
 $("#post-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const selected = [...document.querySelectorAll("input[name=connection]:checked")].map((item) => item.value);
+  const selected = selectedConnectionIds();
   if (!selected.length) { setNotice("#post-result", "Выберите хотя бы одну площадку.", true); return; }
   const hasTikTok = Boolean(selectedTikTokConnection());
   if (hasTikTok && (!$("#tiktok-privacy").value || !$("#tiktok-consent").checked)) {
     setNotice("#post-result", "Для TikTok выберите видимость и подтвердите согласие на публикацию.", true); return;
   }
+  const instagramConnections = selectedInstagramConnections();
+  const tiktokCover = hasTikTok ? $("#tiktok-cover-file").files[0] : null;
+  const instagramCover = instagramConnections.length && hasSingleInstagramReelVideo()
+    ? $("#instagram-cover-file").files[0] : null;
+  const instagramAudioId = instagramConnections.length === 1 && hasSingleInstagramReelVideo()
+    ? $("#instagram-audio-id").value || null : null;
   const attachmentIds = [];
   try {
     for (const file of $("#post-files").files) {
-      const form = new FormData(); form.append("file", file);
-      const upload = await api("/v1/uploads", { method: "POST", body: form }); attachmentIds.push(upload.id);
+      const upload = await uploadFile(file); attachmentIds.push(upload.id);
     }
+    const tiktokCoverUpload = tiktokCover ? await uploadFile(tiktokCover) : null;
+    const instagramCoverUpload = instagramCover ? await uploadFile(instagramCover) : null;
     const localTime = $("#scheduled-at").value;
     const created = await api("/v1/posts", { method: "POST", body: JSON.stringify({
       content: $("#post-content").value, connection_ids: selected, attachment_ids: attachmentIds,
       scheduled_at: localTime ? new Date(localTime).toISOString() : null,
       instagram_content_type: $("#instagram-content-type").value,
+      tiktok_cover_attachment_id: tiktokCoverUpload?.id || null,
+      instagram_cover_attachment_id: instagramCoverUpload?.id || null,
+      instagram_audio_id: instagramAudioId,
+      instagram_audio_volume: Number($("#instagram-audio-volume").value),
+      instagram_video_volume: Number($("#instagram-video-volume").value),
       tiktok_settings: hasTikTok ? {
         privacy_level: $("#tiktok-privacy").value,
         allow_comment: $("#tiktok-allow-comment").checked,
@@ -386,52 +373,11 @@ $("#post-form").addEventListener("submit", async (event) => {
         express_consent_given: $("#tiktok-consent").checked,
       } : null,
     }) });
-    event.target.reset(); tiktokConnectionId = null; await refreshPosts();
+    event.target.reset(); tiktokConnectionId = null; instagramAudioConnectionId = null;
+    await refreshPosts();
+    void updatePostPlatformOptions();
     setNotice("#post-result", `Пост создан. Назначений: ${created.deliveries.length}.`);
   } catch (error) { setNotice("#post-result", error.message, true); }
-});
-
-$("#user-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    await api("/v1/admin/users", { method: "POST", body: JSON.stringify({
-      email: $("#user-email").value, password: $("#user-password").value,
-      display_name: $("#user-name").value, is_superuser: $("#user-super").checked,
-    }) });
-    event.target.reset(); await refreshUsers(); setNotice("#admin-result", "Кабинет создан.");
-  } catch (error) { setNotice("#admin-result", error.message, true); }
-});
-
-$("#admin-credential-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    await api(`/v1/admin/users/${$("#admin-credential-user").value}/credentials`, { method: "POST", body: JSON.stringify({
-      provider: $("#admin-credential-provider").value,
-      api_token: $("#admin-credential-token").value,
-    }) });
-    event.target.reset(); updateAdminCredentialFields();
-    const connectionProvider = $("#admin-connection-provider").value;
-    if (connectionProvider === "zernio") void loadZernioAccounts();
-    if (connectionProvider === "telegram" || connectionProvider === "whapi") void loadAutomaticTargets();
-    setNotice("#admin-result", "Токен клиента сохранён и скрыт.");
-  } catch (error) { setNotice("#admin-result", error.message, true); }
-});
-
-$("#admin-connection-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const provider = $("#admin-connection-provider").value;
-  const externalId = provider === "zernio" ? $("#admin-zernio-account").value
-    : provider === "telegram" || provider === "whapi" ? $("#admin-automatic-target").value
-      : $("#admin-connection-target").value;
-  if (!externalId) { setNotice("#admin-result", "Сначала выберите площадку из списка.", true); return; }
-  try {
-    await api(`/v1/admin/users/${$("#admin-connection-user").value}/connections`, { method: "POST", body: JSON.stringify({
-      provider, platform: $("#admin-connection-platform").value,
-      label: $("#admin-connection-label").value,
-      external_id: externalId,
-    }) });
-    event.target.reset(); updateAdminConnectionFields(); setNotice("#admin-result", "Площадка пользователя сохранена.");
-  } catch (error) { setNotice("#admin-result", error.message, true); }
 });
 
 if (state.token) {
