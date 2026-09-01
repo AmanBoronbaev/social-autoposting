@@ -183,6 +183,51 @@ function isVideoFile(file) {
   return file.type.startsWith("video/") || /\.(3gp|avi|flv|hevc|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|ts|webm|wmv)$/i.test(file.name);
 }
 
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let size = bytes;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
+  return `${size >= 10 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
+}
+
+function uploadQueueItems() {
+  const items = [...$("#post-files").files].map((file) => ({
+    file, label: isVideoFile(file) ? "Видео" : file.type.startsWith("image/") ? "Фото" : "Документ", icon: isVideoFile(file) ? "▶" : file.type.startsWith("image/") ? "▣" : "▤",
+  }));
+  const hasTikTok = Boolean(selectedTikTokConnection());
+  const hasInstagramReel = selectedInstagramConnections().length && hasSingleInstagramReelVideo();
+  const tiktokCover = hasTikTok ? $("#tiktok-cover-file").files[0] : null;
+  const instagramCover = hasInstagramReel ? $("#instagram-cover-file").files[0] : null;
+  if (tiktokCover) items.push({ file: tiktokCover, label: "Обложка TikTok", icon: "▣" });
+  if (instagramCover) items.push({ file: instagramCover, label: "Обложка Instagram", icon: "▣" });
+  return items;
+}
+
+function renderUploadQueue({ activeIndex = null, completeThrough = -1, title } = {}) {
+  const queue = $("#upload-queue");
+  const items = uploadQueueItems();
+  queue.classList.toggle("hidden", !items.length);
+  if (!items.length) return;
+  $("#upload-queue-title").textContent = title || "Выбрано для публикации";
+  const list = $("#upload-queue-items");
+  clear(list);
+  items.forEach((item, index) => {
+    const isActive = index === activeIndex;
+    const isDone = index <= completeThrough;
+    const status = isActive ? "Загружается…" : isDone ? "Готово" : "Ожидает";
+    list.append(node("div", { class: `upload-queue-item${isActive ? " active" : ""}${isDone ? " done" : ""}` }, [
+      node("span", { class: "upload-queue-icon", text: item.icon }),
+      node("span", { class: "upload-queue-meta" }, [
+        node("strong", { text: item.label }),
+        node("span", { class: "upload-queue-name", text: `${item.file.name} · ${formatFileSize(item.file.size)}` }),
+      ]),
+      node("span", { class: "upload-queue-status", text: status }),
+    ]));
+  });
+}
+
 async function updateTikTokOptions() {
   const fieldset = $("#tiktok-options");
   const selected = selectedTikTokConnection();
@@ -292,19 +337,40 @@ async function updatePostPlatformOptions() {
   await Promise.all([updateTikTokOptions(), Promise.resolve(updateInstagramOptions())]);
 }
 
-$("#post-targets").addEventListener("change", () => void updatePostPlatformOptions());
+function refreshPostPlatformOptions() {
+  void updatePostPlatformOptions().finally(() => renderUploadQueue());
+}
+
+$("#post-targets").addEventListener("change", refreshPostPlatformOptions);
 $("#post-files").addEventListener("change", () => {
   tiktokConnectionId = null;
   instagramAudioConnectionId = null;
-  void updatePostPlatformOptions();
+  refreshPostPlatformOptions();
 });
-$("#instagram-content-type").addEventListener("change", () => void updateInstagramOptions());
+$("#instagram-content-type").addEventListener("change", () => {
+  updateInstagramOptions();
+  renderUploadQueue();
+});
 $("#instagram-audio-search").addEventListener("click", () => void loadInstagramAudio());
+$("#tiktok-cover-file").addEventListener("change", () => renderUploadQueue());
+$("#instagram-cover-file").addEventListener("change", () => renderUploadQueue());
 
 async function uploadFile(file) {
   const form = new FormData();
   form.append("file", file);
   return api("/v1/uploads", { method: "POST", body: form });
+}
+
+function setPostFormBusy(form, isBusy) {
+  form.querySelectorAll("input, select, textarea, button").forEach((control) => {
+    if (isBusy) {
+      control.dataset.wasDisabled = String(control.disabled);
+      control.disabled = true;
+    } else {
+      control.disabled = control.dataset.wasDisabled === "true";
+      delete control.dataset.wasDisabled;
+    }
+  });
 }
 
 $("#login-form").addEventListener("submit", async (event) => {
@@ -329,6 +395,8 @@ document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click",
 
 $("#post-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
+  if (form.dataset.submitting === "true") return;
   const selected = selectedConnectionIds();
   if (!selected.length) { setNotice("#post-result", "Выберите хотя бы одну площадку.", true); return; }
   const hasTikTok = Boolean(selectedTikTokConnection());
@@ -342,12 +410,30 @@ $("#post-form").addEventListener("submit", async (event) => {
   const instagramAudioId = instagramConnections.length === 1 && hasSingleInstagramReelVideo()
     ? $("#instagram-audio-id").value || null : null;
   const attachmentIds = [];
+  const submitButton = $("#post-submit");
+  const submitLabel = submitButton.textContent;
+  const queueItems = uploadQueueItems();
+  form.dataset.submitting = "true";
+  setPostFormBusy(form, true);
+  submitButton.textContent = "Загружаем…";
+  setNotice("#post-result", "Подготавливаем файлы к загрузке…");
+  let createdSuccessfully = false;
   try {
+    let queueIndex = 0;
+    const uploadQueueFile = async (file) => {
+      renderUploadQueue({ activeIndex: queueIndex, completeThrough: queueIndex - 1, title: "Загружаем файлы" });
+      const upload = await uploadFile(file);
+      queueIndex += 1;
+      return upload;
+    };
     for (const file of $("#post-files").files) {
-      const upload = await uploadFile(file); attachmentIds.push(upload.id);
+      const upload = await uploadQueueFile(file);
+      attachmentIds.push(upload.id);
     }
-    const tiktokCoverUpload = tiktokCover ? await uploadFile(tiktokCover) : null;
-    const instagramCoverUpload = instagramCover ? await uploadFile(instagramCover) : null;
+    const tiktokCoverUpload = tiktokCover ? await uploadQueueFile(tiktokCover) : null;
+    const instagramCoverUpload = instagramCover ? await uploadQueueFile(instagramCover) : null;
+    renderUploadQueue({ completeThrough: queueItems.length - 1, title: "Создаём публикацию" });
+    submitButton.textContent = "Создаём публикацию…";
     const localTime = $("#scheduled-at").value;
     const created = await api("/v1/posts", { method: "POST", body: JSON.stringify({
       content: $("#post-content").value, connection_ids: selected, attachment_ids: attachmentIds,
@@ -373,11 +459,21 @@ $("#post-form").addEventListener("submit", async (event) => {
         express_consent_given: $("#tiktok-consent").checked,
       } : null,
     }) });
-    event.target.reset(); tiktokConnectionId = null; instagramAudioConnectionId = null;
+    createdSuccessfully = true;
+    form.reset(); tiktokConnectionId = null; instagramAudioConnectionId = null;
     await refreshPosts();
     void updatePostPlatformOptions();
     setNotice("#post-result", `Пост создан. Назначений: ${created.deliveries.length}.`);
-  } catch (error) { setNotice("#post-result", error.message, true); }
+  } catch (error) {
+    renderUploadQueue({ title: "Не удалось завершить загрузку" });
+    setNotice("#post-result", error.message, true);
+    $("#post-result").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } finally {
+    delete form.dataset.submitting;
+    setPostFormBusy(form, false);
+    submitButton.textContent = submitLabel;
+    renderUploadQueue(createdSuccessfully ? {} : { title: "Файлы готовы к повторной отправке" });
+  }
 });
 
 if (state.token) {

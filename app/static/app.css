@@ -4,6 +4,7 @@ body { margin: 0; min-width: 320px; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; border: 0; border-radius: .55rem; padding: .7rem 1rem; background: #6d5dfc; color: white; font-weight: 650; }
 button:hover { filter: brightness(1.12); }
+button:disabled { cursor: wait; filter: none; opacity: .7; }
 button.secondary { background: #25304e; }
 input, select, textarea { width: 100%; border: 1px solid #334466; background: #111a30; color: #eef2ff; border-radius: .45rem; padding: .65rem .75rem; }
 textarea { resize: vertical; }
@@ -41,6 +42,15 @@ small, .muted { color: #a4b2d2; }
 .attachment-file { color: #bdb5ff; overflow-wrap: anywhere; }
 .notice { min-height: 1.25rem; color: #8de0b2; }
 .error { min-height: 1.25rem; color: #ff9eaa; }
+.upload-queue { display: grid; gap: .55rem; padding: .75rem; border: 1px solid #405681; border-radius: .6rem; background: #0e1730; }
+.upload-queue-items { display: grid; gap: .4rem; }
+.upload-queue-item { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border-radius: .45rem; background: #17233f; }
+.upload-queue-item.active { outline: 1px solid #8d83ff; background: #252451; }
+.upload-queue-item.done { color: #b9f4cd; }
+.upload-queue-icon { display: grid; place-items: center; flex: 0 0 2rem; width: 2rem; height: 2rem; border-radius: .4rem; background: #293b63; }
+.upload-queue-meta { display: grid; gap: .1rem; min-width: 0; }
+.upload-queue-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-queue-status { margin-left: auto; color: #aebcff; font-size: .85rem; white-space: nowrap; }
 .hidden { display: none !important; }
 fieldset { border: 1px solid #334466; border-radius: .55rem; }
 @media (max-width: 700px) { .two { grid-template-columns: 1fr; } .shell { padding: .65rem; } .card { padding: 1rem; } }

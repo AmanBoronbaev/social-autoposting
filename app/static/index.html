@@ -44,6 +44,10 @@
               <input id="post-files" type="file" multiple accept="image/*,video/*,application/pdf">
               <small>Видео перед отправкой приводится к MP4 (H.264/AAC). PDF можно отправлять только в Telegram и WhatsApp.</small>
             </label>
+            <section id="upload-queue" class="upload-queue hidden" aria-live="polite" aria-atomic="false">
+              <strong id="upload-queue-title">Выбрано для публикации</strong>
+              <div id="upload-queue-items" class="upload-queue-items"></div>
+            </section>
             <label>Время публикации
               <input id="scheduled-at" type="datetime-local">
               <small>Пусто — опубликовать сразу. Время считается в часовом поясе вашего устройства.</small>
@@ -103,7 +107,7 @@
               <legend>Куда отправить</legend>
               <div id="post-targets" class="targets"><span class="muted">Сначала добавьте площадку.</span></div>
             </fieldset>
-            <button type="submit">Создать публикацию</button>
+            <button id="post-submit" type="submit">Создать публикацию</button>
           </form>
           <p id="post-result" class="notice" role="status"></p>
         </section>
