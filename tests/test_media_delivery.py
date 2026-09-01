@@ -1,3 +1,4 @@
+import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.main import connection_dict, normalized_upload_content_type, post_dict
 from app.models import Attachment, Connection, Delivery, Post, User
-from app.providers import ZernioClient, prepared_attachment, publish_whapi
+from app.providers import ZernioClient, prepared_attachment, publish_telegram, publish_whapi
 from app.settings import get_settings
 from app.worker import recover_zernio_status_checks, zernio_failure_reason
 
@@ -62,6 +63,46 @@ def test_whapi_uses_base64_json_media_not_an_external_url(tmp_path: Path, monkey
         "media": "data:image/png;name=poster.png;base64,aGVsbG8=",
     }
     assert "files" not in call
+
+
+def test_telegram_sends_selected_images_as_ordered_albums(tmp_path: Path, monkeypatch) -> None:
+    settings = get_settings().model_copy(update={"media_dir": tmp_path})
+    # Deliberately create the Python list out of order. The persisted position,
+    # not a database row order, defines which photo is first in Telegram.
+    attachments: list[Attachment] = []
+    for position in range(16):
+        storage_key = f"customer/{position}.png"
+        source = tmp_path / storage_key
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(f"image-{position}".encode())
+        attachments.append(
+            Attachment(
+                position=position,
+                storage_key=storage_key,
+                original_name=f"{position}.png",
+                content_type="image/png",
+                size_bytes=source.stat().st_size,
+            )
+        )
+    post = Post(content="Album caption", attachments=list(reversed(attachments)))
+    connection = Connection(external_id="@client_channel")
+    RecordingClient.calls = []
+    monkeypatch.setattr("app.providers.httpx.Client", RecordingClient)
+
+    publish_telegram(post, connection, settings, "test-telegram-token")
+
+    assert len(RecordingClient.calls) == 2
+    first, second = RecordingClient.calls
+    assert str(first["url"]).endswith("/sendMediaGroup")
+    assert str(second["url"]).endswith("/sendMediaGroup")
+    first_media = json.loads(first["data"]["media"])
+    second_media = json.loads(second["data"]["media"])
+    assert [item["media"] for item in first_media] == [f"attach://file{index}" for index in range(10)]
+    assert [item["media"] for item in second_media] == [f"attach://file{index}" for index in range(6)]
+    assert first_media[0]["caption"] == "Album caption"
+    assert "caption" not in second_media[0]
+    assert first["files"]["file0"][0] == "0.png"
+    assert second["files"]["file0"][0] == "10.png"
 
 
 def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -> None:

@@ -21,6 +21,9 @@ def main() -> None:
             connection.execute(
                 text("ALTER TABLE attachments ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'media'")
             )
+    if "position" not in attachment_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE attachments ADD COLUMN position INTEGER NOT NULL DEFAULT 0"))
     settings = get_settings()
     if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
         return

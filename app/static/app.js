@@ -230,7 +230,7 @@ function renderUploadQueue({ activeIndex = null, activeStatus, completeThrough =
     list.append(node("div", { class: `upload-queue-item${isActive ? " active" : ""}${isDone ? " done" : ""}` }, [
       node("span", { class: "upload-queue-icon", text: item.icon }),
       node("span", { class: "upload-queue-meta" }, [
-        node("strong", { text: item.label }),
+        node("strong", { text: item.label === "Фото" || item.label === "Видео" || item.label === "Документ" ? `${index + 1}. ${item.label}` : item.label }),
         node("span", { class: "upload-queue-name", text: `${item.file.name} · ${formatFileSize(item.file.size)}` }),
       ]),
       node("span", { class: "upload-queue-status", text: status }),

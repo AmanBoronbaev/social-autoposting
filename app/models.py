@@ -76,7 +76,12 @@ class Post(Timestamped, Base):
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     user: Mapped[User] = relationship(back_populates="posts")
-    attachments: Mapped[list["Attachment"]] = relationship(back_populates="post")
+    # The selected media order is meaningful for albums and carousels: the
+    # first item is the cover/first slide on most social platforms.
+    attachments: Mapped[list["Attachment"]] = relationship(
+        back_populates="post",
+        order_by=lambda: (Attachment.position, Attachment.created_at, Attachment.id),
+    )
     deliveries: Mapped[list["Delivery"]] = relationship(back_populates="post", cascade="all, delete-orphan")
 
 
@@ -89,6 +94,9 @@ class Attachment(Timestamped, Base):
     # A cover is stored with its post but must never become a post media item.
     # Existing rows default to ``media`` during the additive database upgrade.
     role: Mapped[str] = mapped_column(String(16), default="media", server_default="media", index=True)
+    # Position in the post selected by the customer. It is persisted instead
+    # of relying on database row order, which is undefined for an SQL IN query.
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     original_name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(255))
     size_bytes: Mapped[int] = mapped_column(Integer)

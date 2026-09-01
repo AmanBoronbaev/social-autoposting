@@ -1,8 +1,9 @@
 import base64
+import json
 import shutil
 import subprocess
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,10 @@ class PreparedAttachment:
 
 def post_media_attachments(post: Post) -> list[Attachment]:
     """Return publication media, excluding images saved only as custom covers."""
-    return [item for item in post.attachments if (item.role or "media") == "media"]
+    media = [item for item in post.attachments if (item.role or "media") == "media"]
+    # Also sort here for in-memory posts used by the worker and tests. Database
+    # relationship loading has the same order configured on ``Post``.
+    return sorted(media, key=lambda item: item.position or 0)
 
 
 def post_cover_attachment(post: Post, attachment_id: str) -> Attachment:
@@ -432,6 +436,36 @@ def _telegram_method(content_type: str) -> tuple[str, str]:
     return "sendDocument", "document"
 
 
+def _telegram_album_kind(content_type: str) -> str:
+    """Return the Telegram media-group family compatible with a file type."""
+    if content_type.startswith(("image/", "video/")):
+        return "visual"
+    return "document"
+
+
+def _telegram_attachment_batches(attachments: list[Attachment]) -> Iterator[list[Attachment]]:
+    """Split media into compatible Telegram albums of no more than ten items."""
+    batch: list[Attachment] = []
+    kind: str | None = None
+    for attachment in attachments:
+        attachment_kind = _telegram_album_kind(attachment.content_type)
+        if batch and (attachment_kind != kind or len(batch) == 10):
+            yield batch
+            batch = []
+        batch.append(attachment)
+        kind = attachment_kind
+    if batch:
+        yield batch
+
+
+def _telegram_media_type(content_type: str) -> str:
+    if content_type.startswith("image/"):
+        return "photo"
+    if content_type.startswith("video/"):
+        return "video"
+    return "document"
+
+
 def publish_telegram(post: Post, connection: Connection, settings: Settings, bot_token: str) -> PublishResult:
     if not bot_token:
         raise ProviderError("Telegram bot token is missing for this customer")
@@ -447,21 +481,53 @@ def publish_telegram(post: Post, connection: Connection, settings: Settings, bot
                 )
                 result.append(_response_json(response, bot_token))
             else:
-                for index, attachment in enumerate(attachments):
-                    with prepared_attachment(attachment, settings) as prepared:
-                        if prepared.path.stat().st_size > settings.telegram_max_upload_bytes:
-                            raise ProviderError("Telegram attachment exceeds configured upload limit")
-                        method, field = _telegram_method(prepared.content_type)
-                        data = {"chat_id": connection.external_id}
-                        if index == 0 and post.content:
-                            data["caption"] = post.content
-                        with prepared.path.open("rb") as file_handle:
-                            response = client.post(
-                                f"{base}/bot{bot_token}/{method}",
-                                data=data,
-                                files={field: (prepared.original_name, file_handle, prepared.content_type)},
+                caption_sent = False
+                for batch in _telegram_attachment_batches(attachments):
+                    # Telegram's sendMediaGroup requires 2–10 compatible
+                    # items. A single trailing file remains a normal message.
+                    if len(batch) == 1:
+                        attachment = batch[0]
+                        with prepared_attachment(attachment, settings) as prepared:
+                            if prepared.path.stat().st_size > settings.telegram_max_upload_bytes:
+                                raise ProviderError("Telegram attachment exceeds configured upload limit")
+                            method, field = _telegram_method(prepared.content_type)
+                            data = {"chat_id": connection.external_id}
+                            if not caption_sent and post.content:
+                                data["caption"] = post.content
+                                caption_sent = True
+                            with prepared.path.open("rb") as file_handle:
+                                response = client.post(
+                                    f"{base}/bot{bot_token}/{method}",
+                                    data=data,
+                                    files={field: (prepared.original_name, file_handle, prepared.content_type)},
+                                )
+                            result.append(_response_json(response, bot_token))
+                        continue
+
+                    with ExitStack() as stack:
+                        media: list[dict[str, str]] = []
+                        files: dict[str, tuple[str, Any, str]] = {}
+                        for index, attachment in enumerate(batch):
+                            prepared = stack.enter_context(prepared_attachment(attachment, settings))
+                            if prepared.path.stat().st_size > settings.telegram_max_upload_bytes:
+                                raise ProviderError("Telegram attachment exceeds configured upload limit")
+                            field = f"file{index}"
+                            item = {"type": _telegram_media_type(prepared.content_type), "media": f"attach://{field}"}
+                            if not caption_sent and index == 0 and post.content:
+                                item["caption"] = post.content
+                                caption_sent = True
+                            media.append(item)
+                            files[field] = (
+                                prepared.original_name,
+                                stack.enter_context(prepared.path.open("rb")),
+                                prepared.content_type,
                             )
-                        result.append(_response_json(response, bot_token))
+                        response = client.post(
+                            f"{base}/bot{bot_token}/sendMediaGroup",
+                            data={"chat_id": connection.external_id, "media": json.dumps(media, ensure_ascii=False)},
+                            files=files,
+                        )
+                    result.append(_response_json(response, bot_token))
     except httpx.HTTPError as error:
         raise ProviderError(f"Telegram network error: {_safe_error(error, bot_token)}") from error
     return PublishResult({"messages": result})

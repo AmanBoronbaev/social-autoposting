@@ -761,6 +761,11 @@ def create_post(
     )
     if len(attachments) != len(payload.attachment_ids):
         raise HTTPException(status_code=404, detail="one or more uploads were not found or already used")
+    # SQL does not preserve the order of an ``IN (...)`` list. Keep the exact
+    # order from the upload form so the first selected item stays first in
+    # every destination's carousel/album.
+    attachments_by_id = {item.id: item for item in attachments}
+    attachments = [attachments_by_id[attachment_id] for attachment_id in payload.attachment_ids]
     cover_ids = {
         attachment_id
         for attachment_id in (payload.tiktok_cover_attachment_id, payload.instagram_cover_attachment_id)
@@ -849,9 +854,10 @@ def create_post(
     post = Post(user_id=user.id, content=payload.content, scheduled_at=scheduled_at)
     db.add(post)
     db.flush()
-    for attachment in attachments:
+    for position, attachment in enumerate(attachments):
         attachment.post_id = post.id
         attachment.role = "media"
+        attachment.position = position
     for attachment in cover_attachments:
         attachment.post_id = post.id
         attachment.role = "cover"
