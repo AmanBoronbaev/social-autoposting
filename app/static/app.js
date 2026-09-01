@@ -3,6 +3,7 @@ let tiktokConnectionId = null;
 let instagramAudioConnectionId = null;
 let adminUiLoaded = false;
 const appBasePath = new URL("./", document.baseURI).pathname.replace(/\/$/, "");
+const MAX_ATTACHMENTS_PER_POST = 35;
 
 const $ = (selector) => document.querySelector(selector);
 const clear = (node) => node.replaceChildren();
@@ -31,7 +32,12 @@ async function api(path, options = {}) {
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const resolvedPath = `${appBasePath}/${path.replace(/^\//, "")}`.replace(/^\/{2,}/, "/");
-  const response = await fetch(resolvedPath, { ...fetchOptions, headers });
+  let response;
+  try {
+    response = await fetch(resolvedPath, { ...fetchOptions, headers });
+  } catch {
+    throw new Error("Не удалось связаться с сервером. Проверьте интернет и не закрывайте страницу во время загрузки.");
+  }
   const payload = response.status === 204
     ? null
     : responseType === "text" ? await response.text() : await response.json().catch(() => ({}));
@@ -183,6 +189,10 @@ function isVideoFile(file) {
   return file.type.startsWith("video/") || /\.(3gp|avi|flv|hevc|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|ts|webm|wmv)$/i.test(file.name);
 }
 
+function isImageFile(file) {
+  return file.type.startsWith("image/") || /\.(avif|gif|heic|heif|jpe?g|png|webp)$/i.test(file.name);
+}
+
 function formatFileSize(bytes) {
   if (!Number.isFinite(bytes)) return "";
   const units = ["Б", "КБ", "МБ", "ГБ"];
@@ -194,7 +204,7 @@ function formatFileSize(bytes) {
 
 function uploadQueueItems() {
   const items = [...$("#post-files").files].map((file) => ({
-    file, label: isVideoFile(file) ? "Видео" : file.type.startsWith("image/") ? "Фото" : "Документ", icon: isVideoFile(file) ? "▶" : file.type.startsWith("image/") ? "▣" : "▤",
+    file, label: isVideoFile(file) ? "Видео" : isImageFile(file) ? "Фото" : "Документ", icon: isVideoFile(file) ? "▶" : isImageFile(file) ? "▣" : "▤",
   }));
   const hasTikTok = Boolean(selectedTikTokConnection());
   const hasInstagramReel = selectedInstagramConnections().length && hasSingleInstagramReelVideo();
@@ -205,7 +215,7 @@ function uploadQueueItems() {
   return items;
 }
 
-function renderUploadQueue({ activeIndex = null, completeThrough = -1, title } = {}) {
+function renderUploadQueue({ activeIndex = null, activeStatus, completeThrough = -1, title } = {}) {
   const queue = $("#upload-queue");
   const items = uploadQueueItems();
   queue.classList.toggle("hidden", !items.length);
@@ -216,7 +226,7 @@ function renderUploadQueue({ activeIndex = null, completeThrough = -1, title } =
   items.forEach((item, index) => {
     const isActive = index === activeIndex;
     const isDone = index <= completeThrough;
-    const status = isActive ? "Загружается…" : isDone ? "Готово" : "Ожидает";
+    const status = isActive ? activeStatus || "Загружается…" : isDone ? "Готово" : "Ожидает";
     list.append(node("div", { class: `upload-queue-item${isActive ? " active" : ""}${isDone ? " done" : ""}` }, [
       node("span", { class: "upload-queue-icon", text: item.icon }),
       node("span", { class: "upload-queue-meta" }, [
@@ -232,13 +242,29 @@ async function updateTikTokOptions() {
   const fieldset = $("#tiktok-options");
   const selected = selectedTikTokConnection();
   fieldset.classList.toggle("hidden", !selected);
-  if (!selected) { tiktokConnectionId = null; return; }
-  if (tiktokConnectionId === selected.id && !$("#tiktok-privacy").disabled) return;
-  const privacy = $("#tiktok-privacy");
-  const commercial = $("#tiktok-commercial");
+  if (!selected) {
+    // A hidden required checkbox is still validated by Safari and Chromium.
+    // Disable every TikTok-only control unless TikTok is really selected.
+    fieldset.querySelectorAll("input, select").forEach((control) => { control.disabled = true; });
+    tiktokConnectionId = null;
+    return;
+  }
   const selectedFiles = [...$("#post-files").files];
   const hasVideo = selectedFiles.some(isVideoFile);
   const hasPhotosOnly = selectedFiles.length > 0 && !hasVideo;
+  $("#tiktok-allow-comment").disabled = false;
+  $("#tiktok-allow-duet").disabled = false;
+  $("#tiktok-allow-stitch").disabled = false;
+  $("#tiktok-ai").disabled = false;
+  $("#tiktok-draft").disabled = false;
+  $("#tiktok-consent").disabled = false;
+  $("#tiktok-auto-music").disabled = !hasPhotosOnly;
+  $("#tiktok-photo-cover-index").disabled = !hasPhotosOnly;
+  $("#tiktok-video-cover-timestamp").disabled = !hasVideo;
+  $("#tiktok-cover-file").disabled = !hasVideo;
+  if (tiktokConnectionId === selected.id && !$("#tiktok-privacy").disabled) return;
+  const privacy = $("#tiktok-privacy");
+  const commercial = $("#tiktok-commercial");
   document.querySelectorAll(".tiktok-video-option").forEach((element) => element.classList.toggle("hidden", !hasVideo));
   document.querySelectorAll(".tiktok-photo-option").forEach((element) => element.classList.toggle("hidden", !hasPhotosOnly));
   clear(privacy); clear(commercial); privacy.disabled = true; commercial.disabled = true;
@@ -355,10 +381,67 @@ $("#instagram-audio-search").addEventListener("click", () => void loadInstagramA
 $("#tiktok-cover-file").addEventListener("change", () => renderUploadQueue());
 $("#instagram-cover-file").addEventListener("change", () => renderUploadQueue());
 
-async function uploadFile(file) {
-  const form = new FormData();
-  form.append("file", file);
-  return api("/v1/uploads", { method: "POST", body: form });
+function uploadFile(file, onProgress) {
+  const resolvedPath = `${appBasePath}/v1/uploads`.replace(/^\/{2,}/, "/");
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", resolvedPath);
+    request.timeout = 300_000;
+    if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onload = () => {
+      let payload = {};
+      try { payload = request.responseText ? JSON.parse(request.responseText) : {}; } catch { /* handled below */ }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(payload);
+      } else {
+        reject(new Error(errorText(payload)));
+      }
+    };
+    request.onerror = () => reject(new Error(
+      `Не удалось загрузить «${file.name}». Проверьте интернет, размер файла и не закрывайте страницу.`
+    ));
+    request.ontimeout = () => reject(new Error(`Загрузка «${file.name}» заняла слишком много времени. Попробуйте ещё раз.`));
+    request.onabort = () => reject(new Error(`Загрузка «${file.name}» была отменена.`));
+    const form = new FormData();
+    form.append("file", file);
+    request.send(form);
+  });
+}
+
+function validatePostMedia(selected) {
+  const files = [...$("#post-files").files];
+  const instagramConnections = selectedInstagramConnections();
+  const hasTikTok = Boolean(selectedTikTokConnection());
+  const story = $("#instagram-content-type").value === "story";
+  if (files.length > MAX_ATTACHMENTS_PER_POST) {
+    return `За одну публикацию можно выбрать не более ${MAX_ATTACHMENTS_PER_POST} файлов.`;
+  }
+  if (instagramConnections.length && files.length > 10) {
+    return "Instagram принимает не более 10 фото или видео в одной карусели. Уберите лишние файлы или снимите Instagram.";
+  }
+  if (story && (
+    files.length !== 1
+    || selected.length !== instagramConnections.length
+    || (!isImageFile(files[0]) && !isVideoFile(files[0]))
+  )) {
+    return "Instagram Story отправляется только как один файл и только в Instagram.";
+  }
+  if (hasTikTok) {
+    const videos = files.filter(isVideoFile);
+    const photos = files.filter(isImageFile);
+    if (!files.length) return "Для TikTok добавьте одно видео или от 1 до 35 фото.";
+    if (videos.length && (videos.length !== 1 || files.length !== 1)) {
+      return "TikTok принимает одно видео или фотокарусель: видео и фото нельзя смешивать.";
+    }
+    if (!videos.length && photos.length !== files.length) {
+      return "Для TikTok можно выбрать только изображения или одно видео.";
+    }
+  }
+  return null;
 }
 
 function setPostFormBusy(form, isBusy) {
@@ -399,6 +482,8 @@ $("#post-form").addEventListener("submit", async (event) => {
   if (form.dataset.submitting === "true") return;
   const selected = selectedConnectionIds();
   if (!selected.length) { setNotice("#post-result", "Выберите хотя бы одну площадку.", true); return; }
+  const mediaError = validatePostMedia(selected);
+  if (mediaError) { setNotice("#post-result", mediaError, true); return; }
   const hasTikTok = Boolean(selectedTikTokConnection());
   if (hasTikTok && (!$("#tiktok-privacy").value || !$("#tiktok-consent").checked)) {
     setNotice("#post-result", "Для TikTok выберите видимость и подтвердите согласие на публикацию.", true); return;
@@ -422,7 +507,14 @@ $("#post-form").addEventListener("submit", async (event) => {
     let queueIndex = 0;
     const uploadQueueFile = async (file) => {
       renderUploadQueue({ activeIndex: queueIndex, completeThrough: queueIndex - 1, title: "Загружаем файлы" });
-      const upload = await uploadFile(file);
+      const upload = await uploadFile(file, (percent) => {
+        renderUploadQueue({
+          activeIndex: queueIndex,
+          activeStatus: `Загрузка: ${percent}%`,
+          completeThrough: queueIndex - 1,
+          title: "Загружаем файлы",
+        });
+      });
       queueIndex += 1;
       return upload;
     };
@@ -462,7 +554,6 @@ $("#post-form").addEventListener("submit", async (event) => {
     createdSuccessfully = true;
     form.reset(); tiktokConnectionId = null; instagramAudioConnectionId = null;
     await refreshPosts();
-    void updatePostPlatformOptions();
     setNotice("#post-result", `Пост создан. Назначений: ${created.deliveries.length}.`);
   } catch (error) {
     renderUploadQueue({ title: "Не удалось завершить загрузку" });
@@ -472,6 +563,7 @@ $("#post-form").addEventListener("submit", async (event) => {
     delete form.dataset.submitting;
     setPostFormBusy(form, false);
     submitButton.textContent = submitLabel;
+    if (createdSuccessfully) await updatePostPlatformOptions();
     renderUploadQueue(createdSuccessfully ? {} : { title: "Файлы готовы к повторной отправке" });
   }
 });

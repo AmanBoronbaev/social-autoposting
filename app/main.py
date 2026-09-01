@@ -39,6 +39,9 @@ UPLOAD_CONTENT_TYPES = {
     ".png": "image/png",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".avif": "image/avif",
     ".mp4": "video/mp4",
     ".m4v": "video/x-m4v",
     ".mov": "video/quicktime",
@@ -64,9 +67,10 @@ def now() -> datetime:
 def normalized_upload_content_type(declared_type: str | None, original_name: str) -> str | None:
     """Prefer a browser's recognised media type, with a safe extension fallback.
 
-    Some browsers label MOV/MKV/AVI uploads as application/octet-stream. The
-    fallback lets FFmpeg prepare those common video formats while still
-    rejecting arbitrary executable/binary uploads.
+    Some browsers, especially Safari, label otherwise supported camera files
+    as a generic binary stream. The extension fallback accepts a small
+    allow-list of image and video formats while still rejecting arbitrary
+    executable/binary uploads.
     """
     content_type = (declared_type or "").lower().split(";", 1)[0].strip()
     if content_type.startswith("image/") or content_type.startswith("video/") or content_type == "application/pdf":

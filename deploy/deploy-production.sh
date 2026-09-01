@@ -11,10 +11,13 @@ read_env() { sed -n "s/^$1=//p" .env | tail -n 1; }
 domain="$(read_env APP_DOMAIN)"
 email="$(read_env CERTBOT_EMAIL)"
 path="$(read_env APP_PATH)"
+worker_replicas="$(read_env APP_WORKER_REPLICAS)"
+worker_replicas="${worker_replicas:-2}"
 [[ -n "$domain" && -n "$email" && -n "$path" ]] || die "APP_DOMAIN, CERTBOT_EMAIL and APP_PATH are required"
 [[ "$domain" != "post.example.com" && "$path" != *"CHANGE_ME"* ]] || die "replace example domain and secret path"
 [[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "APP_DOMAIN must be a valid DNS name"
 [[ "$path" =~ ^/[A-Za-z0-9._-]{12,128}/$ ]] || die "APP_PATH must be a URL-safe path ending in /"
+[[ "$worker_replicas" =~ ^[1-4]$ ]] || die "APP_WORKER_REPLICAS must be a number from 1 to 4"
 
 compose=(docker compose -f compose.yaml -f compose.prod.yaml)
 certbot_compose=(docker compose --profile tools -f compose.yaml -f compose.prod.yaml)
@@ -35,6 +38,6 @@ fi
 # `worker` has its own Compose image, so it must be rebuilt as well; otherwise
 # provider fixes can reach the web API while the old publishing code keeps
 # running in the worker container.
-"${compose[@]}" up -d --build worker
+"${compose[@]}" up -d --build --scale "worker=$worker_replicas" worker
 "${compose[@]}" ps
 printf 'Open: https://%s%s\n' "$domain" "$path"

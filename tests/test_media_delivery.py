@@ -139,6 +139,10 @@ def test_common_video_extension_is_accepted_when_browser_reports_generic_binary(
     assert normalized_upload_content_type("application/octet-stream", "unknown.bin") is None
 
 
+def test_safari_camera_image_extension_is_accepted_when_mime_type_is_missing() -> None:
+    assert normalized_upload_content_type("application/octet-stream", "IMG_1234.HEIC") == "image/heic"
+
+
 def test_zernio_uses_a_cover_only_as_cover_not_as_post_media(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     media = make_attachment(tmp_path, content_type="image/png", name="post.png", content=b"post")

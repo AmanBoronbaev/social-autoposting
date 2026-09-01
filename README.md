@@ -146,6 +146,10 @@ logged.
   visible on a social network. History shows every destination separately so a
   failed WhatsApp retry cannot be confused with a successful Telegram or Zernio
   delivery.
+- Production starts two worker containers by default. They claim database rows
+  with `SKIP LOCKED`, so the same delivery is never sent twice by two workers.
+  Set `APP_WORKER_REPLICAS` to a value from 1 to 4 in `.env` and redeploy; start
+  with 2 because higher concurrency can hit per-account social-platform limits.
 
 ## Core API flow
 
