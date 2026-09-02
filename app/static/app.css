@@ -51,6 +51,7 @@ small, .muted { color: #a4b2d2; }
 .upload-queue-meta { display: grid; gap: .1rem; min-width: 0; }
 .upload-queue-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-queue-status { margin-left: auto; color: #aebcff; font-size: .85rem; white-space: nowrap; }
+.limit-error { color: #ff9eaa; font-weight: 650; }
 .hidden { display: none !important; }
 fieldset { border: 1px solid #334466; border-radius: .55rem; }
 @media (max-width: 700px) { .two { grid-template-columns: 1fr; } .shell { padding: .65rem; } .card { padding: 1rem; } }

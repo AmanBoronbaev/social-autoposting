@@ -7,7 +7,7 @@ import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.main import connection_dict, normalized_upload_content_type, post_dict
+from app.main import connection_dict, normalized_upload_content_type, post_dict, tiktok_photo_title_limit_error
 from app.models import Attachment, Connection, Delivery, Post, User
 from app.providers import ZernioClient, prepared_attachment, publish_telegram, publish_whapi
 from app.settings import get_settings
@@ -182,6 +182,14 @@ def test_common_video_extension_is_accepted_when_browser_reports_generic_binary(
 
 def test_safari_camera_image_extension_is_accepted_when_mime_type_is_missing() -> None:
     assert normalized_upload_content_type("application/octet-stream", "IMG_1234.HEIC") == "image/heic"
+
+
+def test_tiktok_photo_title_limit_is_checked_before_delivery() -> None:
+    assert tiktok_photo_title_limit_error("x" * 90) is None
+    assert tiktok_photo_title_limit_error("x" * 91) == (
+        "Для фотокарусели TikTok текст может содержать до 90 символов. Сейчас: 91. "
+        "Сократите текст или публикуйте как видео."
+    )
 
 
 def test_zernio_uses_a_cover_only_as_cover_not_as_post_media(tmp_path: Path, monkeypatch) -> None:

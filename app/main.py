@@ -30,6 +30,7 @@ from app.settings import Settings, get_settings
 app = FastAPI(title="Autoposting Platform", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
 bearer = HTTPBearer(auto_error=False)
 MEDIA_AUDIENCE = "whapi-media"
+TIKTOK_PHOTO_TITLE_MAX_LENGTH = 90
 STATIC_DIR = Path(__file__).parent / "static"
 ADMIN_ASSETS_DIR = Path(__file__).parent / "admin_assets"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
@@ -76,6 +77,17 @@ def normalized_upload_content_type(declared_type: str | None, original_name: str
     if content_type.startswith("image/") or content_type.startswith("video/") or content_type == "application/pdf":
         return content_type
     return UPLOAD_CONTENT_TYPES.get(Path(original_name).suffix.lower())
+
+
+def tiktok_photo_title_limit_error(content: str) -> str | None:
+    """Return a customer-safe validation error for a TikTok photo title."""
+    if len(content) <= TIKTOK_PHOTO_TITLE_MAX_LENGTH:
+        return None
+    return (
+        "Для фотокарусели TikTok текст может содержать до "
+        f"{TIKTOK_PHOTO_TITLE_MAX_LENGTH} символов. Сейчас: {len(content)}. "
+        "Сократите текст или публикуйте как видео."
+    )
 
 
 @app.middleware("http")
@@ -824,6 +836,10 @@ def create_post(
             raise HTTPException(status_code=422, detail="TikTok accepts either images or one video, not mixed files")
         if is_video and len(attachments) != 1:
             raise HTTPException(status_code=422, detail="a TikTok post accepts exactly one video")
+        if is_photo:
+            title_error = tiktok_photo_title_limit_error(payload.content)
+            if title_error is not None:
+                raise HTTPException(status_code=422, detail=title_error)
     if tiktok_cover is not None:
         if not tiktok_connections:
             raise HTTPException(status_code=422, detail="a TikTok cover requires a TikTok destination")

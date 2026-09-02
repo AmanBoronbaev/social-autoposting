@@ -4,6 +4,7 @@ let instagramAudioConnectionId = null;
 let adminUiLoaded = false;
 const appBasePath = new URL("./", document.baseURI).pathname.replace(/\/$/, "");
 const MAX_ATTACHMENTS_PER_POST = 35;
+const TIKTOK_PHOTO_TITLE_MAX_LENGTH = 90;
 
 const $ = (selector) => document.querySelector(selector);
 const clear = (node) => node.replaceChildren();
@@ -238,10 +239,27 @@ function renderUploadQueue({ activeIndex = null, activeStatus, completeThrough =
   });
 }
 
+function updateTikTokPhotoTitleLimit() {
+  const notice = $("#tiktok-photo-title-limit");
+  const files = [...$("#post-files").files];
+  const isPhotoPost = Boolean(selectedTikTokConnection())
+    && files.length > 0
+    && files.every(isImageFile);
+  notice.classList.toggle("hidden", !isPhotoPost);
+  if (!isPhotoPost) return;
+  const length = $("#post-content").value.length;
+  const overLimit = length > TIKTOK_PHOTO_TITLE_MAX_LENGTH;
+  notice.classList.toggle("limit-error", overLimit);
+  notice.textContent = overLimit
+    ? `Текст для фотокарусели TikTok: ${length}/${TIKTOK_PHOTO_TITLE_MAX_LENGTH}. Сократите текст или публикуйте как видео.`
+    : `Текст для фотокарусели TikTok: ${length}/${TIKTOK_PHOTO_TITLE_MAX_LENGTH} символов.`;
+}
+
 async function updateTikTokOptions() {
   const fieldset = $("#tiktok-options");
   const selected = selectedTikTokConnection();
   fieldset.classList.toggle("hidden", !selected);
+  updateTikTokPhotoTitleLimit();
   if (!selected) {
     // A hidden required checkbox is still validated by Safari and Chromium.
     // Disable every TikTok-only control unless TikTok is really selected.
@@ -368,6 +386,7 @@ function refreshPostPlatformOptions() {
 }
 
 $("#post-targets").addEventListener("change", refreshPostPlatformOptions);
+$("#post-content").addEventListener("input", updateTikTokPhotoTitleLimit);
 $("#post-files").addEventListener("change", () => {
   tiktokConnectionId = null;
   instagramAudioConnectionId = null;
@@ -439,6 +458,9 @@ function validatePostMedia(selected) {
     }
     if (!videos.length && photos.length !== files.length) {
       return "Для TikTok можно выбрать только изображения или одно видео.";
+    }
+    if (photos.length === files.length && $("#post-content").value.length > TIKTOK_PHOTO_TITLE_MAX_LENGTH) {
+      return `Для фотокарусели TikTok текст может содержать до ${TIKTOK_PHOTO_TITLE_MAX_LENGTH} символов. Сократите текст или публикуйте как видео.`;
     }
   }
   return null;
