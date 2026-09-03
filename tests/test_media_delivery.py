@@ -126,7 +126,10 @@ def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -
         assert prepared.content_type == "video/mp4"
         assert prepared.original_name == "camera.mp4"
         assert output.is_file()
-    assert ["-vf", "fps=30"] == captured[captured.index("-vf") : captured.index("-vf") + 2]
+    assert [
+        "-vf",
+        "fps=30,scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+    ] == captured[captured.index("-vf") : captured.index("-vf") + 2]
     assert not output.exists()
 
 

@@ -6,6 +6,10 @@ x-app: &app
   environment:
     APP_DATABASE_URL: postgresql+psycopg://autoposting:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/autoposting
     APP_MEDIA_DIR: /var/lib/autoposting/media
+    # Starlette spools large multipart uploads before the endpoint can stream
+    # them. Keep that temporary data on the bounded application volume rather
+    # than the small read-only-container /tmp tmpfs.
+    TMPDIR: /var/lib/autoposting/media/.upload-tmp
   volumes:
     - media:/var/lib/autoposting/media
   restart: unless-stopped
@@ -21,7 +25,7 @@ services:
   init-media:
     build: .
     user: "0:0"
-    command: ["sh", "-c", "chown -R 10001:10001 /var/lib/autoposting/media"]
+    command: ["sh", "-c", "mkdir -p /var/lib/autoposting/media/.upload-tmp && chmod 700 /var/lib/autoposting/media/.upload-tmp && chown -R 10001:10001 /var/lib/autoposting/media"]
     volumes:
       - media:/var/lib/autoposting/media
     restart: "no"

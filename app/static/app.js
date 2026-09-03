@@ -405,7 +405,7 @@ function uploadFile(file, onProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", resolvedPath);
-    request.timeout = 300_000;
+    request.timeout = 900_000;
     if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
     request.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;

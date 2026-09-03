@@ -42,7 +42,7 @@
             </label>
             <label>Фото, видео или PDF
               <input id="post-files" type="file" multiple accept="image/*,video/*,application/pdf">
-              <small>Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Видео перед отправкой приводится к MP4 (H.264/AAC). PDF можно отправлять только в Telegram и WhatsApp.</small>
+              <small>До 500 МБ на файл. Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Видео перед отправкой приводится к MP4 (H.264/AAC), 30 FPS и максимуму 1080p. PDF можно отправлять только в Telegram и WhatsApp.</small>
             </label>
             <section id="upload-queue" class="upload-queue hidden" aria-live="polite" aria-atomic="false">
               <strong id="upload-queue-title">Выбрано для публикации</strong>
@@ -59,6 +59,26 @@
               </select>
               <small>История требует одно фото или видео. Instagram не показывает подпись Story и не даёт добавить link sticker через API.</small>
             </label>
+            <fieldset id="tiktok-options" class="hidden">
+              <legend>TikTok</legend>
+              <label>Видимость <select id="tiktok-privacy" disabled></select><small>Обязательно: доступные варианты берутся из TikTok-аккаунта.</small></label>
+              <label class="check"><input id="tiktok-allow-comment" type="checkbox"> Разрешить комментарии</label>
+              <label class="check"><input id="tiktok-allow-duet" type="checkbox"> Разрешить Duet</label>
+              <label class="check"><input id="tiktok-allow-stitch" type="checkbox"> Разрешить Stitch</label>
+              <label>Коммерческий контент <select id="tiktok-commercial" disabled></select></label>
+              <label class="check"><input id="tiktok-ai" type="checkbox"> Видео создано ИИ</label>
+              <label class="check"><input id="tiktok-draft" type="checkbox"> Сохранить в черновиках TikTok вместо публикации</label>
+              <label class="tiktok-photo-option hidden">Индекс обложки карусели <input id="tiktok-photo-cover-index" type="number" min="0" max="34" placeholder="Необязательно: от 0 до 34"></label>
+              <label class="check tiktok-photo-option hidden"><input id="tiktok-auto-music" type="checkbox"> Добавить рекомендованную музыку TikTok к фотокарусели</label>
+              <label class="tiktok-video-option hidden">Кадр обложки видео, мс <input id="tiktok-video-cover-timestamp" type="number" min="0" max="600000" placeholder="1000 по умолчанию"></label>
+              <label class="tiktok-video-option hidden">Своя обложка видео
+                <input id="tiktok-cover-file" type="file" accept="image/jpeg,image/png,image/webp">
+                <small>Необязательно. JPG, PNG или WebP до 20 МБ. Своя обложка важнее выбранного кадра.</small>
+              </label>
+              <label class="check"><input id="tiktok-consent" type="checkbox" required> Подтверждаю предпросмотр контента и согласие на публикацию в TikTok <em>(обязательно)</em></label>
+              <small id="tiktok-photo-title-limit" class="tiktok-photo-option hidden" aria-live="polite"></small>
+              <small id="tiktok-help">Для API всегда передаются переключатели комментариев, Duet и Stitch — их можно выключить. Выбор видимости и подтверждение согласия обязательны; остальные параметры необязательны.</small>
+            </fieldset>
             <fieldset id="instagram-options" class="hidden">
               <legend>Instagram Reel</legend>
               <label>Своя обложка Reel
@@ -83,26 +103,6 @@
                 <label>Громкость исходного видео, % <input id="instagram-video-volume" type="number" min="0" max="100" value="100"></label>
                 <small id="instagram-audio-help">Музыка доступна только для одного Reel-видео. Свой трек можно использовать, заранее добавив его в видео при наличии прав.</small>
               </div>
-            </fieldset>
-            <fieldset id="tiktok-options" class="hidden">
-              <legend>TikTok</legend>
-              <label>Видимость <select id="tiktok-privacy" disabled></select><small>Обязательно: доступные варианты берутся из TikTok-аккаунта.</small></label>
-              <label class="check"><input id="tiktok-allow-comment" type="checkbox"> Разрешить комментарии</label>
-              <label class="check"><input id="tiktok-allow-duet" type="checkbox"> Разрешить Duet</label>
-              <label class="check"><input id="tiktok-allow-stitch" type="checkbox"> Разрешить Stitch</label>
-              <label>Коммерческий контент <select id="tiktok-commercial" disabled></select></label>
-              <label class="check"><input id="tiktok-ai" type="checkbox"> Видео создано ИИ</label>
-              <label class="check"><input id="tiktok-draft" type="checkbox"> Сохранить в черновиках TikTok вместо публикации</label>
-              <label class="tiktok-photo-option hidden">Индекс обложки карусели <input id="tiktok-photo-cover-index" type="number" min="0" max="34" placeholder="Необязательно: от 0 до 34"></label>
-              <label class="check tiktok-photo-option hidden"><input id="tiktok-auto-music" type="checkbox"> Добавить рекомендованную музыку TikTok к фотокарусели</label>
-              <label class="tiktok-video-option hidden">Кадр обложки видео, мс <input id="tiktok-video-cover-timestamp" type="number" min="0" max="600000" placeholder="1000 по умолчанию"></label>
-              <label class="tiktok-video-option hidden">Своя обложка видео
-                <input id="tiktok-cover-file" type="file" accept="image/jpeg,image/png,image/webp">
-                <small>Необязательно. JPG, PNG или WebP до 20 МБ. Своя обложка важнее выбранного кадра.</small>
-              </label>
-              <label class="check"><input id="tiktok-consent" type="checkbox" required> Подтверждаю предпросмотр контента и согласие на публикацию в TikTok <em>(обязательно)</em></label>
-              <small id="tiktok-photo-title-limit" class="tiktok-photo-option hidden" aria-live="polite"></small>
-              <small id="tiktok-help">Для API всегда передаются переключатели комментариев, Duet и Stitch — их можно выключить. Выбор видимости и подтверждение согласия обязательны; остальные параметры необязательны.</small>
             </fieldset>
             <fieldset>
               <legend>Куда отправить</legend>

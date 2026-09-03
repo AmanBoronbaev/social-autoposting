@@ -95,9 +95,12 @@ def prepared_attachment(attachment: Attachment, settings: Settings) -> Iterator[
                 "-c:v",
                 "libx264",
                 # TikTok rejects frame rates outside 23–60 FPS. Re-encoding at
-                # a constant 30 FPS also handles variable-frame-rate phone videos.
+                # a constant 30 FPS also handles variable-frame-rate phone
+                # videos. Limit a 4K source to 1080p so large uploads become
+                # practical for the social providers without changing normal
+                # 720p/1080p uploads.
                 "-vf",
-                "fps=30",
+                "fps=30,scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
                 "-preset",
                 "medium",
                 "-crf",

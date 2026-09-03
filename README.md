@@ -119,11 +119,14 @@ logged.
   local test as well as in production and never needs direct access to the
   media directory. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB; account for the
   Base64 overhead when configuring proxy limits.
-- The production Docker image installs FFmpeg. It creates a temporary MP4/H.264
-  copy of every video before delivery, then removes it; source uploads stay
-  untouched. Images remain in their original JPEG/PNG form. PDFs are available
-  only for Telegram and WhatsApp, because Instagram and TikTok do not accept
-  document posts.
+- Source uploads default to 500 MiB. Nginx and the API read the same
+  `APP_MAX_UPLOAD_BYTES` value; multipart staging uses the private media volume
+  rather than RAM. The production Docker image installs FFmpeg. It creates a
+  temporary MP4/H.264/AAC copy of every video, at 30 FPS and no larger than
+  1080p, before delivery, then removes it; source uploads stay untouched.
+  Images remain in their original JPEG/PNG form. PDFs are available only for
+  Telegram and WhatsApp, because Instagram and TikTok do not accept document
+  posts.
 - For TikTok, the user must choose one visibility value returned for that exact
   TikTok account and confirm preview/consent. Comment, Duet and Stitch switches
   are always sent to the API but can be off; AI disclosure, commercial label,

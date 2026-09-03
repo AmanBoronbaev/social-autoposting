@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr
     encryption_key: SecretStr
     media_dir: Path = Path("/var/lib/autoposting/media")
-    max_upload_bytes: int = Field(default=52_428_800, ge=1, le=5 * 1024**3)
+    max_upload_bytes: int = Field(default=500 * 1024**2, ge=1, le=5 * 1024**3)
     worker_poll_seconds: int = Field(default=3, ge=1, le=60)
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: SecretStr | None = None
