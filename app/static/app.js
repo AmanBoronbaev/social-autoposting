@@ -210,7 +210,7 @@ function hasSelectedTelegramConnection() {
 }
 
 function isVideoFile(file) {
-  return file.type.startsWith("video/") || /\.(3gp|avi|flv|hevc|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|ts|webm|wmv)$/i.test(file.name);
+  return file.type.startsWith("video/") || /\.(3gp|asf|avi|divx|dv|f4v|flv|hevc|m2t|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|mts|mxf|ogm|ogv|ts|vob|webm|wmv)$/i.test(file.name);
 }
 
 function isImageFile(file) {

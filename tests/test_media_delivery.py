@@ -260,8 +260,12 @@ def test_customer_connection_does_not_receive_provider_name() -> None:
     assert public["platform"] == "tiktok"
 
 
-def test_common_video_extension_is_accepted_when_browser_reports_generic_binary() -> None:
+def test_common_video_extensions_are_accepted_when_browser_reports_generic_binary() -> None:
+    assert normalized_upload_content_type("application/octet-stream", "camera.MOV") == "video/quicktime"
     assert normalized_upload_content_type("application/octet-stream", "camera.MKV") == "video/x-matroska"
+    assert normalized_upload_content_type("application/octet-stream", "camera.MTS") == "video/mp2t"
+    assert normalized_upload_content_type("application/octet-stream", "archive.OGV") == "video/ogg"
+    assert normalized_upload_content_type("application/octet-stream", "disc.VOB") == "video/dvd"
     assert normalized_upload_content_type("application/octet-stream", "unknown.bin") is None
 
 

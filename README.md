@@ -32,9 +32,10 @@ The MVP already provides:
   a streaming multipart upload, so local testing doesn't require a public media
   URL or a Base64 copy in worker memory;
 - every uploaded video is prepared just before delivery as MP4/H.264/AAC, the
-  broadly compatible baseline for Instagram, TikTok and WhatsApp. Common MOV,
-  MKV, AVI, WebM, WMV and similar video extensions are accepted even when a
-  browser labels them as a generic binary upload;
+  broadly compatible baseline for Instagram, TikTok and WhatsApp. MOV, MP4,
+  MKV, AVI, WebM, WMV, MTS/M2TS, TS, OGV, VOB, DV, MXF, ASF, F4V and similar
+  video containers are accepted even when a browser labels them as a generic
+  binary upload; files must still be readable by the installed FFmpeg;
 - a responsive Russian-language browser interface at `/`: login, owner-managed
   cabinets, connections, immediate/scheduled posts and delivery history.
 

@@ -752,7 +752,11 @@ def publish_whapi(
                 result.append(_response_json(response, api_token))
             else:
                 for index, attachment in enumerate(attachments):
-                    video_limit = settings.whapi_max_media_bytes if attachment.content_type.startswith("video/") else None
+                    video_limit = (
+                        settings.whapi_max_media_bytes
+                        if attachment.content_type.startswith("video/")
+                        else None
+                    )
                     with prepared_attachment(attachment, settings, max_bytes=video_limit) as prepared:
                         _check_whapi_attachment_size(prepared, settings)
                         payload = {
