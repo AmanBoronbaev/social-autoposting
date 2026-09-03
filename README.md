@@ -140,6 +140,9 @@ logged.
   rather than RAM. The production Docker image installs FFmpeg. It creates a
   temporary MP4/H.264/AAC copy of every video, at 30 FPS and no larger than
   1080p, before delivery, then removes it; source uploads stay untouched.
+  Browser and Nginx upload timeouts are two hours so a large upload over a slow
+  connection is not cut off after a few minutes; keep the browser page open
+  until the progress row finishes.
   Images remain in their original JPEG/PNG form. PDFs are available only for
   Telegram and WhatsApp, because Instagram and TikTok do not accept document
   posts.

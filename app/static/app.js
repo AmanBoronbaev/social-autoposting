@@ -516,7 +516,10 @@ function uploadFile(file, onProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", resolvedPath);
-    request.timeout = 900_000;
+    // A large source video can take substantially longer than fifteen minutes
+    // on a mobile connection. Nginx uses the same two-hour ceiling; the upload
+    // progress row remains visible while bytes are still moving.
+    request.timeout = 7_200_000;
     if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
     request.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
