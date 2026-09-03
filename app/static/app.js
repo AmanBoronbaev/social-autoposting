@@ -204,6 +204,11 @@ function hasSelectedWhatsAppConnection() {
   return state.connections.some((connection) => selected.includes(connection.id) && connection.platform === "whatsapp");
 }
 
+function hasSelectedTelegramConnection() {
+  const selected = selectedConnectionIds();
+  return state.connections.some((connection) => selected.includes(connection.id) && connection.platform === "telegram");
+}
+
 function isVideoFile(file) {
   return file.type.startsWith("video/") || /\.(3gp|avi|flv|hevc|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|ts|webm|wmv)$/i.test(file.name);
 }
@@ -221,29 +226,66 @@ function formatFileSize(bytes) {
   return `${size >= 10 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
 }
 
+function configuredMediaLimit(name, fallback) {
+  const configured = Number(state.me?.media_limits?.[name]);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : fallback;
+}
+
+function uploadLimitBytes() {
+  return configuredMediaLimit("upload_bytes", 500 * 1024 * 1024);
+}
+
+function telegramMediaLimitBytes() {
+  return configuredMediaLimit("telegram_media_bytes", 50 * 1024 * 1024);
+}
+
 function whatsappMediaLimitBytes() {
-  const configured = Number(state.me?.media_limits?.whatsapp_media_bytes);
-  return Number.isSafeInteger(configured) && configured > 0 ? configured : 100 * 1024 * 1024;
+  return configuredMediaLimit("whatsapp_media_bytes", 100 * 1024 * 1024);
+}
+
+function whatsappDocumentLimitBytes() {
+  return configuredMediaLimit("whatsapp_document_bytes", 2_000 * 1024 * 1024);
+}
+
+function isPdfFile(file) {
+  return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+}
+
+function whatsappLimitForFile(file) {
+  return isPdfFile(file) ? whatsappDocumentLimitBytes() : whatsappMediaLimitBytes();
+}
+
+function updateUploadLimitHelp() {
+  $("#upload-limit-help").textContent = `До ${formatFileSize(uploadLimitBytes())} на файл. Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Видео перед отправкой приводится к MP4 (H.264/AAC), 30 FPS и максимуму 1080p. PDF можно отправлять только в Telegram и WhatsApp.`;
 }
 
 function updatePlatformMediaHelp() {
   const help = $("#platform-media-help");
-  if (!hasSelectedWhatsAppConnection()) {
+  updateUploadLimitHelp();
+  const hasWhatsApp = hasSelectedWhatsAppConnection();
+  const hasTelegram = hasSelectedTelegramConnection();
+  if (!hasWhatsApp && !hasTelegram) {
     help.classList.add("hidden");
     help.textContent = "";
     return;
   }
-  const limit = whatsappMediaLimitBytes();
   const files = [...$("#post-files").files];
-  const unchangedTooLarge = files.find((file) => !isVideoFile(file) && file.size > limit);
-  const videoOverLimit = files.some((file) => isVideoFile(file) && file.size > limit);
+  const unchangedTooLarge = hasWhatsApp && files.find(
+    (file) => !isVideoFile(file) && file.size > whatsappLimitForFile(file)
+  );
+  const videoOverLimit = hasWhatsApp && files.some((file) => isVideoFile(file) && file.size > whatsappMediaLimitBytes());
+  const parts = [];
+  if (hasTelegram) parts.push(`Telegram: до ${formatFileSize(telegramMediaLimitBytes())} на итоговый файл.`);
+  if (hasWhatsApp) parts.push(
+    `WhatsApp: фото и итоговое видео до ${formatFileSize(whatsappMediaLimitBytes())}, PDF до ${formatFileSize(whatsappDocumentLimitBytes())}.`
+  );
   help.classList.remove("hidden");
   if (unchangedTooLarge) {
-    help.textContent = `WhatsApp: «${unchangedTooLarge.name}» больше ${formatFileSize(limit)} и не будет отправлен. Уменьшите файл или снимите WhatsApp с публикации.`;
+    help.textContent = `${parts.join(" ")} «${unchangedTooLarge.name}» больше допустимого объёма и не будет отправлен. Уменьшите файл или снимите WhatsApp с публикации.`;
   } else if (videoOverLimit) {
-    help.textContent = `WhatsApp: итоговое видео должно быть до ${formatFileSize(limit)}. Оно будет сжато перед отправкой; если размер останется больше лимита, WhatsApp не получит его.`;
+    help.textContent = `${parts.join(" ")} Видео будет сжато перед отправкой; если размер останется больше лимита WhatsApp, оно не будет отправлено.`;
   } else {
-    help.textContent = `WhatsApp: итоговый файл должен быть до ${formatFileSize(limit)}. Видео сжимается перед отправкой; фото и PDF отправляются без уменьшения.`;
+    help.textContent = `${parts.join(" ")} Видео сжимается перед отправкой; фото и PDF отправляются без уменьшения.`;
   }
 }
 
@@ -482,10 +524,20 @@ function validatePostMedia(selected) {
   const files = [...$("#post-files").files];
   const instagramConnections = selectedInstagramConnections();
   const hasTikTok = Boolean(selectedTikTokConnection());
-  if (hasSelectedWhatsAppConnection()) {
-    const tooLarge = files.find((file) => !isVideoFile(file) && file.size > whatsappMediaLimitBytes());
+  const sourceTooLarge = files.find((file) => file.size > uploadLimitBytes());
+  if (sourceTooLarge) {
+    return `Файл «${sourceTooLarge.name}» больше лимита загрузки (${formatFileSize(uploadLimitBytes())}).`;
+  }
+  if (hasSelectedTelegramConnection()) {
+    const tooLarge = files.find((file) => file.size > telegramMediaLimitBytes());
     if (tooLarge) {
-      return `Файл «${tooLarge.name}» больше допустимого объёма для WhatsApp (${formatFileSize(whatsappMediaLimitBytes())}). Уменьшите файл или снимите WhatsApp с публикации.`;
+      return `Файл «${tooLarge.name}» больше допустимого объёма для Telegram (${formatFileSize(telegramMediaLimitBytes())}).`;
+    }
+  }
+  if (hasSelectedWhatsAppConnection()) {
+    const tooLarge = files.find((file) => !isVideoFile(file) && file.size > whatsappLimitForFile(file));
+    if (tooLarge) {
+      return `Файл «${tooLarge.name}» больше допустимого объёма для WhatsApp (${formatFileSize(whatsappLimitForFile(tooLarge))}). Уменьшите файл или снимите WhatsApp с публикации.`;
     }
   }
   const story = $("#instagram-content-type").value === "story";

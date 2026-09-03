@@ -363,7 +363,9 @@ def me(user: User = Depends(current_user), settings: Settings = Depends(settings
     # file that cannot be delivered to a selected destination.
     result["media_limits"] = {
         "upload_bytes": settings.max_upload_bytes,
+        "telegram_media_bytes": settings.telegram_max_upload_bytes,
         "whatsapp_media_bytes": settings.whapi_max_media_bytes,
+        "whatsapp_document_bytes": settings.whapi_max_document_bytes,
     }
     return result
 
@@ -830,7 +832,13 @@ def create_post(
             (
                 item
                 for item in attachments
-                if not item.content_type.startswith("video/") and item.size_bytes > settings.whapi_max_media_bytes
+                if not item.content_type.startswith("video/")
+                and item.size_bytes
+                > (
+                    settings.whapi_max_document_bytes
+                    if item.content_type == "application/pdf"
+                    else settings.whapi_max_media_bytes
+                )
             ),
             None,
         )

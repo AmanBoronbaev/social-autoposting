@@ -37,6 +37,18 @@ class Settings(BaseSettings):
         le=2 * 1024**3,
         validation_alias="WHAPI_MAX_MEDIA_BYTES",
     )
+    whapi_max_document_bytes: int = Field(
+        default=2_000 * 1024**2,
+        ge=1,
+        le=2_000 * 1024**2,
+        validation_alias="WHAPI_MAX_DOCUMENT_BYTES",
+    )
+    whapi_media_upload_timeout_seconds: int = Field(
+        default=7_200,
+        ge=30,
+        le=7_200,
+        validation_alias="WHAPI_MEDIA_UPLOAD_TIMEOUT_SECONDS",
+    )
     media_prepare_timeout_seconds: int = Field(default=900, ge=30, le=7200)
 
     @field_validator("jwt_secret")

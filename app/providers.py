@@ -1,4 +1,3 @@
-import base64
 import hashlib
 import json
 import shutil
@@ -8,7 +7,6 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -576,13 +574,15 @@ def _whapi_endpoint(content_type: str) -> str:
     return "document"
 
 
-def _whapi_media_data_uri(attachment: PreparedAttachment, settings: Settings) -> str:
-    size = attachment.path.stat().st_size
-    if size > settings.whapi_max_media_bytes:
+def _whapi_attachment_limit_bytes(attachment: PreparedAttachment, settings: Settings) -> int:
+    if attachment.content_type == "application/pdf":
+        return settings.whapi_max_document_bytes
+    return settings.whapi_max_media_bytes
+
+
+def _check_whapi_attachment_size(attachment: PreparedAttachment, settings: Settings) -> None:
+    if attachment.path.stat().st_size > _whapi_attachment_limit_bytes(attachment, settings):
         raise ProviderError("attachment exceeds configured WhatsApp media limit")
-    encoded = base64.b64encode(attachment.path.read_bytes()).decode("ascii")
-    filename = quote(attachment.original_name, safe="._-")
-    return f"data:{attachment.content_type};name={filename};base64,{encoded}"
 
 
 def publish_whapi(
@@ -597,7 +597,11 @@ def publish_whapi(
     headers = {"Authorization": f"Bearer {api_token}"}
     attachments = post_media_attachments(post)
     try:
-        with httpx.Client(timeout=180) as client:
+        # The media endpoints accept multipart/form-data. Streaming the opened
+        # file avoids Base64's 33% overhead and avoids reading multi-gigabyte
+        # documents into worker memory.
+        timeout = httpx.Timeout(settings.whapi_media_upload_timeout_seconds, connect=30)
+        with httpx.Client(timeout=timeout) as client:
             if not attachments:
                 response = client.post(
                     "https://gate.whapi.cloud/messages/text",
@@ -608,17 +612,21 @@ def publish_whapi(
             else:
                 for index, attachment in enumerate(attachments):
                     with prepared_attachment(attachment, settings) as prepared:
+                        _check_whapi_attachment_size(prepared, settings)
                         payload = {
                             "to": connection.external_id,
-                            "media": _whapi_media_data_uri(prepared, settings),
                         }
                         if index == 0 and post.content:
                             payload["caption"] = post.content
-                        response = client.post(
-                            f"https://gate.whapi.cloud/messages/{_whapi_endpoint(prepared.content_type)}",
-                            headers=headers,
-                            json=payload,
-                        )
+                        if prepared.content_type == "application/pdf":
+                            payload["filename"] = prepared.original_name
+                        with prepared.path.open("rb") as media_file:
+                            response = client.post(
+                                f"https://gate.whapi.cloud/messages/{_whapi_endpoint(prepared.content_type)}",
+                                headers=headers,
+                                data=payload,
+                                files={"media": (prepared.original_name, media_file, prepared.content_type)},
+                            )
                         result.append(_response_json(response, api_token))
     except httpx.HTTPError as error:
         raise ProviderError(f"Whapi network error: {_safe_error(error, api_token)}") from error

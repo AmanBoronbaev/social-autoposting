@@ -15,7 +15,7 @@ class FakeClient:
     responses: dict[str, httpx.Response] = {}
     requests: list[tuple[str, str, dict[str, object]]] = []
 
-    def __init__(self, *, timeout: int) -> None:
+    def __init__(self, *, timeout: object) -> None:
         del timeout
 
     def __enter__(self):
@@ -95,7 +95,7 @@ def test_whapi_discovery_returns_groups_and_channels(monkeypatch) -> None:
     ]
 
 
-def test_whapi_sends_local_media_as_base64_not_a_public_link(monkeypatch, tmp_path) -> None:
+def test_whapi_sends_local_media_as_multipart_not_a_public_link(monkeypatch, tmp_path) -> None:
     media_file = tmp_path / "picture.png"
     media_file.write_bytes(b"png bytes")
     attachment = Attachment(
@@ -118,11 +118,11 @@ def test_whapi_sends_local_media_as_base64_not_a_public_link(monkeypatch, tmp_pa
     assert response.payload == {"messages": [{"sent": True}]}
     method, url, request = FakeClient.requests[0]
     assert (method, url) == ("POST", endpoint)
-    assert request["json"] == {
+    assert request["data"] == {
         "to": "123@g.us",
         "caption": "Caption",
-        "media": "data:image/png;name=picture.png;base64,cG5nIGJ5dGVz",
     }
+    assert request["files"]["media"][0] == "picture.png"
 
 
 def test_instagram_audio_search_uses_account_scoped_catalog(monkeypatch) -> None:

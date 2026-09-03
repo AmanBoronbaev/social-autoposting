@@ -123,10 +123,11 @@ logged.
   admin; no personal Telegram account or MTProto session is used. On the first
   use after the switch, the worker safely calls Telegram's required `logOut`
   operation against the cloud Bot API for that customer's bot token.
-- Whapi receives local media directly as Base64. It therefore works during a
-  local test as well as in production and never needs direct access to the
-  media directory. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB; account for the
-  Base64 overhead when configuring proxy limits.
+- Whapi receives a streaming `multipart/form-data` file, never a public media
+  URL or an in-memory Base64 copy. This avoids Base64 overhead and permits
+  large documents. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB for photos and
+  final videos; `WHAPI_MAX_DOCUMENT_BYTES` defaults to 2,000 MiB for PDFs.
+  The delivery platform can still reject unsupported or oversized media.
 - Source uploads default to 500 MiB. Nginx and the API read the same
   `APP_MAX_UPLOAD_BYTES` value; multipart staging uses the private media volume
   rather than RAM. The production Docker image installs FFmpeg. It creates a

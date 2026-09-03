@@ -38,7 +38,7 @@ class RecordingClient:
     response = httpx.Response(200, json={"sent": True})
     calls: list[dict[str, object]] = []
 
-    def __init__(self, *, timeout: int) -> None:
+    def __init__(self, *, timeout: object) -> None:
         del timeout
 
     def __enter__(self):
@@ -52,7 +52,7 @@ class RecordingClient:
         return self.response
 
 
-def test_whapi_uses_base64_json_media_not_an_external_url(tmp_path: Path, monkeypatch) -> None:
+def test_whapi_streams_media_as_multipart_not_base64(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     attachment = make_attachment(tmp_path, content_type="image/png", name="poster.png", content=b"hello")
     post = Post(content="Caption", attachments=[attachment])
@@ -64,12 +64,13 @@ def test_whapi_uses_base64_json_media_not_an_external_url(tmp_path: Path, monkey
 
     call = RecordingClient.calls[0]
     assert call["url"] == "https://gate.whapi.cloud/messages/image"
-    assert call["json"] == {
+    assert call["data"] == {
         "to": "123@g.us",
         "caption": "Caption",
-        "media": "data:image/png;name=poster.png;base64,aGVsbG8=",
     }
-    assert "files" not in call
+    filename, file_handle, content_type = call["files"]["media"]
+    assert (filename, content_type) == ("poster.png", "image/png")
+    assert file_handle.closed
 
 
 def test_customer_sees_a_clear_whatsapp_size_error() -> None:
