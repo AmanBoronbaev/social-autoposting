@@ -82,6 +82,14 @@ def test_customer_sees_a_clear_whatsapp_size_error() -> None:
     )
 
 
+def test_customer_sees_a_clear_video_conversion_error() -> None:
+    delivery = Delivery(status="failed", error="video conversion failed: invalid input")
+
+    assert public_delivery_error(delivery) == (
+        "Не удалось подготовить видео. Пересохраните его или загрузите другой файл."
+    )
+
+
 def test_telegram_sends_selected_images_as_ordered_albums(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     # Deliberately create the Python list out of order. The persisted position,
@@ -137,6 +145,40 @@ def test_local_telegram_api_logs_a_bot_out_of_the_cloud_once(tmp_path: Path, mon
     ]
 
 
+def test_local_telegram_api_accepts_an_already_logged_out_bot(tmp_path: Path, monkeypatch) -> None:
+    settings = get_settings().model_copy(update={"media_dir": tmp_path, "telegram_api_base_url": "http://telegram-bot-api:8081"})
+    post = Post(content="Caption")
+    connection = Connection(external_id="-100123")
+
+    class AlreadyLoggedOutClient:
+        calls: list[str] = []
+
+        def __init__(self, *, timeout: object) -> None:
+            del timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, **kwargs: object) -> httpx.Response:
+            del kwargs
+            self.calls.append(url)
+            if url.endswith("/logOut"):
+                return httpx.Response(400, json={"ok": False, "description": "Logged out"})
+            return httpx.Response(200, json={"ok": True, "result": {}})
+
+    monkeypatch.setattr("app.providers.httpx.Client", AlreadyLoggedOutClient)
+
+    publish_telegram(post, connection, settings, "already-logged-out-test-token")
+
+    assert AlreadyLoggedOutClient.calls == [
+        "https://api.telegram.org/botalready-logged-out-test-token/logOut",
+        "http://telegram-bot-api:8081/botalready-logged-out-test-token/sendMessage",
+    ]
+
+
 def test_external_local_telegram_api_logs_a_bot_out_of_the_cloud_once(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(
         update={"media_dir": tmp_path, "telegram_api_base_url": "https://telegram-api.internal"}
@@ -179,6 +221,7 @@ def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -
         "-vf",
         "fps=30,scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
     ] == captured[captured.index("-vf") : captured.index("-vf") + 2]
+    assert "0:a:0?" in captured
     assert not output.exists()
 
 
@@ -210,6 +253,7 @@ def test_whapi_recompresses_an_oversized_video_to_its_limit(tmp_path: Path, monk
 
     assert any(command[0] == "ffprobe" for command in commands)
     assert any("-pass" in command and command[command.index("-pass") + 1] == "2" for command in commands)
+    assert any("0:a:0?" in command for command in commands)
     filename, file_handle, content_type = RecordingClient.calls[0]["files"]["media"]
     assert (filename, content_type) == ("large.mp4", "video/mp4")
     assert file_handle.closed

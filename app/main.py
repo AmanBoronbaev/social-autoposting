@@ -222,6 +222,8 @@ def public_delivery_error(delivery: Delivery) -> str | None:
         return "Видео должно иметь частоту от 23 до 60 кадров в секунду."
     if "conversion timed out" in error:
         return "Подготовка видео заняла слишком много времени. Загрузите более короткий файл."
+    if "video conversion failed" in error:
+        return "Не удалось подготовить видео. Пересохраните его или загрузите другой файл."
     if "whatsapp media limit" in error:
         return "Итоговый файл больше допустимого объёма для WhatsApp. Уменьшите файл или снимите WhatsApp с публикации."
     if "media file is missing" in error:

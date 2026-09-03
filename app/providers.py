@@ -162,7 +162,7 @@ def _fit_video_to_limit(source: Path, max_bytes: int, settings: Settings) -> Pat
                 [
                     *common,
                     "-map",
-                    "0:a?",
+                    "0:a:0?",
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -225,7 +225,7 @@ def prepared_attachment(
                 "-map",
                 "0:v:0",
                 "-map",
-                "0:a?",
+                "0:a:0?",
                 "-c:v",
                 "libx264",
                 # TikTok rejects frame rates outside 23–60 FPS. Re-encoding at
@@ -469,6 +469,18 @@ def ensure_local_telegram_bot_session(settings: Settings, bot_token: str) -> Non
         raise ProviderError(
             f"Telegram cloud logout failed: {_safe_error(error, bot_token)}", retryable=True
         ) from error
+    # Multiple worker replicas can first encounter the same bot concurrently.
+    # Telegram reports an already-completed cloud logout as HTTP 400 "Logged
+    # out". That is the desired state for the local Bot API, so handle it as
+    # an idempotent success instead of failing a publication.
+    if response.status_code == 400:
+        try:
+            description = str(response.json().get("description", "")).lower()
+        except (AttributeError, ValueError):
+            description = ""
+        if "logged out" in description:
+            _LOCAL_TELEGRAM_BOT_SESSIONS.add(token_fingerprint)
+            return
     _response_json(response, bot_token)
     _LOCAL_TELEGRAM_BOT_SESSIONS.add(token_fingerprint)
 
