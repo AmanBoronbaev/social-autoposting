@@ -255,6 +255,10 @@ function whatsappLimitForFile(file) {
   return isPdfFile(file) ? whatsappDocumentLimitBytes() : whatsappMediaLimitBytes();
 }
 
+function instagramVideoLimitBytes() {
+  return $("#instagram-content-type").value === "story" ? 100 * 1024 * 1024 : 300 * 1024 * 1024;
+}
+
 function updateUploadLimitHelp() {
   $("#upload-limit-help").textContent = `До ${formatFileSize(uploadLimitBytes())} на файл. Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Видео перед отправкой приводится к MP4 (H.264/AAC), 30 FPS и максимуму 1080p. PDF можно отправлять только в Telegram и WhatsApp.`;
 }
@@ -264,7 +268,9 @@ function updatePlatformMediaHelp() {
   updateUploadLimitHelp();
   const hasWhatsApp = hasSelectedWhatsAppConnection();
   const hasTelegram = hasSelectedTelegramConnection();
-  if (!hasWhatsApp && !hasTelegram) {
+  const hasInstagram = selectedInstagramConnections().length > 0;
+  const hasTikTok = Boolean(selectedTikTokConnection());
+  if (!hasWhatsApp && !hasTelegram && !hasInstagram && !hasTikTok) {
     help.classList.add("hidden");
     help.textContent = "";
     return;
@@ -279,6 +285,18 @@ function updatePlatformMediaHelp() {
   if (hasWhatsApp) parts.push(
     `WhatsApp: фото и итоговое видео до ${formatFileSize(whatsappMediaLimitBytes())}, PDF до ${formatFileSize(whatsappDocumentLimitBytes())}.`
   );
+  if (hasInstagram) {
+    const limit = instagramVideoLimitBytes();
+    const type = $("#instagram-content-type").value === "story" ? "Story" : "Reel/публикация";
+    parts.push(`Instagram ${type}: итоговое видео до ${formatFileSize(limit)}; при превышении оно автоматически оптимизируется.`);
+  }
+  if (hasTikTok) {
+    const photoPost = files.length > 0 && files.every(isImageFile);
+    parts.push(photoPost
+      ? "TikTok: фото до 20 МБ каждое."
+      : "TikTok: итоговое видео до 287,6 МБ, длительность 3–600 сек.; видео автоматически оптимизируется."
+    );
+  }
   help.classList.remove("hidden");
   if (unchangedTooLarge) {
     help.textContent = `${parts.join(" ")} «${unchangedTooLarge.name}» больше допустимого объёма и не будет отправлен. Уменьшите файл или снимите WhatsApp с публикации.`;
@@ -306,7 +324,10 @@ function renderUploadQueue({ activeIndex = null, activeStatus, completeThrough =
   const queue = $("#upload-queue");
   const items = uploadQueueItems();
   queue.classList.toggle("hidden", !items.length);
-  if (!items.length) return;
+  if (!items.length) {
+    updatePlatformMediaHelp();
+    return;
+  }
   $("#upload-queue-title").textContent = title || "Выбрано для публикации";
   const list = $("#upload-queue-items");
   clear(list);
@@ -484,6 +505,7 @@ $("#post-files").addEventListener("change", () => {
 $("#instagram-content-type").addEventListener("change", () => {
   updateInstagramOptions();
   renderUploadQueue();
+  updatePlatformMediaHelp();
 });
 $("#instagram-audio-search").addEventListener("click", () => void loadInstagramAudio());
 $("#tiktok-cover-file").addEventListener("change", () => renderUploadQueue());
