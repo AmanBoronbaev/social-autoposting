@@ -120,7 +120,9 @@ logged.
   supports uploads up to 2 GB, while this application intentionally defaults
   source uploads to 500 MB. Keep the local API unexposed on the Docker network.
   The bot must be a group member with permission to send media, or a channel
-  admin; no personal Telegram account or MTProto session is used.
+  admin; no personal Telegram account or MTProto session is used. On the first
+  use after the switch, the worker safely calls Telegram's required `logOut`
+  operation against the cloud Bot API for that customer's bot token.
 - Whapi receives local media directly as Base64. It therefore works during a
   local test as well as in production and never needs direct access to the
   media directory. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB; account for the

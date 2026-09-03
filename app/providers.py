@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import shutil
 import subprocess
@@ -306,6 +307,31 @@ TELEGRAM_DISCOVERY_UPDATE_TYPES = (
     "chat_member",
     "chat_join_request",
 )
+_LOCAL_TELEGRAM_BOT_SESSIONS: set[str] = set()
+
+
+def ensure_local_telegram_bot_session(settings: Settings, bot_token: str) -> None:
+    """Move a bot from Telegram's cloud endpoint to the bundled local API once.
+
+    Telegram requires `logOut` on the cloud Bot API before a bot token can be
+    served by a local Bot API instance. Keep only a SHA-256 fingerprint in the
+    process cache and never expose the token in any error.
+    """
+    local_base = str(settings.telegram_api_base_url).rstrip("/")
+    if local_base != "http://telegram-bot-api:8081":
+        return
+    token_fingerprint = hashlib.sha256(bot_token.encode()).hexdigest()
+    if token_fingerprint in _LOCAL_TELEGRAM_BOT_SESSIONS:
+        return
+    try:
+        with httpx.Client(timeout=20) as client:
+            response = client.post(f"https://api.telegram.org/bot{bot_token}/logOut")
+    except httpx.HTTPError as error:
+        raise ProviderError(
+            f"Telegram cloud logout failed: {_safe_error(error, bot_token)}", retryable=True
+        ) from error
+    _response_json(response, bot_token)
+    _LOCAL_TELEGRAM_BOT_SESSIONS.add(token_fingerprint)
 
 
 def list_telegram_targets(settings: Settings, bot_token: str) -> list[dict[str, str]]:
@@ -317,6 +343,7 @@ def list_telegram_targets(settings: Settings, bot_token: str) -> list[dict[str, 
     """
     if not bot_token:
         raise ProviderError("Telegram bot token is missing for this customer")
+    ensure_local_telegram_bot_session(settings, bot_token)
     base = str(settings.telegram_api_base_url).rstrip("/")
     try:
         with httpx.Client(timeout=20) as client:
@@ -476,6 +503,7 @@ def _telegram_media_type(content_type: str) -> str:
 def publish_telegram(post: Post, connection: Connection, settings: Settings, bot_token: str) -> PublishResult:
     if not bot_token:
         raise ProviderError("Telegram bot token is missing for this customer")
+    ensure_local_telegram_bot_session(settings, bot_token)
     base = str(settings.telegram_api_base_url).rstrip("/")
     result: list[dict[str, Any]] = []
     attachments = post_media_attachments(post)

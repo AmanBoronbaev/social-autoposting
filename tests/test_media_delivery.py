@@ -111,6 +111,21 @@ def test_telegram_sends_selected_images_as_ordered_albums(tmp_path: Path, monkey
     assert second["files"]["file0"][0] == "10.png"
 
 
+def test_local_telegram_api_logs_a_bot_out_of_the_cloud_once(tmp_path: Path, monkeypatch) -> None:
+    settings = get_settings().model_copy(update={"media_dir": tmp_path, "telegram_api_base_url": "http://telegram-bot-api:8081"})
+    post = Post(content="Caption")
+    connection = Connection(external_id="-100123")
+    RecordingClient.calls = []
+    monkeypatch.setattr("app.providers.httpx.Client", RecordingClient)
+
+    publish_telegram(post, connection, settings, "local-test-telegram-token")
+
+    assert [call["url"] for call in RecordingClient.calls] == [
+        "https://api.telegram.org/botlocal-test-telegram-token/logOut",
+        "http://telegram-bot-api:8081/botlocal-test-telegram-token/sendMessage",
+    ]
+
+
 def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     attachment = make_attachment(tmp_path, content_type="video/quicktime", name="camera.mov", content=b"source")
