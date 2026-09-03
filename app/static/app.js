@@ -199,6 +199,11 @@ function selectedInstagramConnections() {
   return state.connections.filter((connection) => selected.includes(connection.id) && connection.platform === "instagram");
 }
 
+function hasSelectedWhatsAppConnection() {
+  const selected = selectedConnectionIds();
+  return state.connections.some((connection) => selected.includes(connection.id) && connection.platform === "whatsapp");
+}
+
 function isVideoFile(file) {
   return file.type.startsWith("video/") || /\.(3gp|avi|flv|hevc|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|ts|webm|wmv)$/i.test(file.name);
 }
@@ -214,6 +219,32 @@ function formatFileSize(bytes) {
   let index = 0;
   while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
   return `${size >= 10 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
+}
+
+function whatsappMediaLimitBytes() {
+  const configured = Number(state.me?.media_limits?.whatsapp_media_bytes);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : 100 * 1024 * 1024;
+}
+
+function updatePlatformMediaHelp() {
+  const help = $("#platform-media-help");
+  if (!hasSelectedWhatsAppConnection()) {
+    help.classList.add("hidden");
+    help.textContent = "";
+    return;
+  }
+  const limit = whatsappMediaLimitBytes();
+  const files = [...$("#post-files").files];
+  const unchangedTooLarge = files.find((file) => !isVideoFile(file) && file.size > limit);
+  const videoOverLimit = files.some((file) => isVideoFile(file) && file.size > limit);
+  help.classList.remove("hidden");
+  if (unchangedTooLarge) {
+    help.textContent = `WhatsApp: «${unchangedTooLarge.name}» больше ${formatFileSize(limit)} и не будет отправлен. Уменьшите файл или снимите WhatsApp с публикации.`;
+  } else if (videoOverLimit) {
+    help.textContent = `WhatsApp: итоговое видео должно быть до ${formatFileSize(limit)}. Оно будет сжато перед отправкой; если размер останется больше лимита, WhatsApp не получит его.`;
+  } else {
+    help.textContent = `WhatsApp: итоговый файл должен быть до ${formatFileSize(limit)}. Видео сжимается перед отправкой; фото и PDF отправляются без уменьшения.`;
+  }
 }
 
 function uploadQueueItems() {
@@ -250,6 +281,7 @@ function renderUploadQueue({ activeIndex = null, activeStatus, completeThrough =
       node("span", { class: "upload-queue-status", text: status }),
     ]));
   });
+  updatePlatformMediaHelp();
 }
 
 function updateTikTokPhotoTitleLimit() {
@@ -394,7 +426,10 @@ async function updatePostPlatformOptions() {
 }
 
 function refreshPostPlatformOptions() {
-  void updatePostPlatformOptions().finally(() => renderUploadQueue());
+  void updatePostPlatformOptions().finally(() => {
+    renderUploadQueue();
+    updatePlatformMediaHelp();
+  });
 }
 
 $("#post-targets").addEventListener("change", refreshPostPlatformOptions);
@@ -447,6 +482,12 @@ function validatePostMedia(selected) {
   const files = [...$("#post-files").files];
   const instagramConnections = selectedInstagramConnections();
   const hasTikTok = Boolean(selectedTikTokConnection());
+  if (hasSelectedWhatsAppConnection()) {
+    const tooLarge = files.find((file) => !isVideoFile(file) && file.size > whatsappMediaLimitBytes());
+    if (tooLarge) {
+      return `Файл «${tooLarge.name}» больше допустимого объёма для WhatsApp (${formatFileSize(whatsappMediaLimitBytes())}). Уменьшите файл или снимите WhatsApp с публикации.`;
+    }
+  }
   const story = $("#instagram-content-type").value === "story";
   if (files.length > MAX_ATTACHMENTS_PER_POST) {
     return `За одну публикацию можно выбрать не более ${MAX_ATTACHMENTS_PER_POST} файлов.`;

@@ -212,6 +212,8 @@ def public_delivery_error(delivery: Delivery) -> str | None:
         return "Видео должно иметь частоту от 23 до 60 кадров в секунду."
     if "conversion timed out" in error:
         return "Подготовка видео заняла слишком много времени. Загрузите более короткий файл."
+    if "whatsapp media limit" in error:
+        return "Итоговый файл больше допустимого объёма для WhatsApp. Уменьшите файл или снимите WhatsApp с публикации."
     if "media file is missing" in error:
         return "Исходный файл больше недоступен. Загрузите его заново."
     return "Публикация не выполнена. Проверьте требования выбранной площадки и повторите попытку."
@@ -355,8 +357,15 @@ def login(
 
 
 @app.get("/v1/me", tags=["auth"])
-def me(user: User = Depends(current_user)) -> dict:
-    return user_dict(user)
+def me(user: User = Depends(current_user), settings: Settings = Depends(settings_dependency)) -> dict:
+    result = user_dict(user)
+    # Customer-facing limits only. The browser can warn before uploading a
+    # file that cannot be delivered to a selected destination.
+    result["media_limits"] = {
+        "upload_bytes": settings.max_upload_bytes,
+        "whatsapp_media_bytes": settings.whapi_max_media_bytes,
+    }
+    return result
 
 
 @app.get("/v1/connections", tags=["connections"])
@@ -816,6 +825,23 @@ def create_post(
     covers_by_id = {item.id: item for item in cover_attachments}
     tiktok_cover = covers_by_id.get(payload.tiktok_cover_attachment_id or "")
     instagram_cover = covers_by_id.get(payload.instagram_cover_attachment_id or "")
+    if any(item.platform == "whatsapp" for item in connections):
+        unchanged_attachment = next(
+            (
+                item
+                for item in attachments
+                if not item.content_type.startswith("video/") and item.size_bytes > settings.whapi_max_media_bytes
+            ),
+            None,
+        )
+        if unchanged_attachment is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Файл «{unchanged_attachment.original_name}» больше допустимого объёма для WhatsApp. "
+                    "Уменьшите файл или снимите WhatsApp с публикации."
+                ),
+            )
     if any(item.provider == "zernio" for item in connections) and any(
         not (attachment.content_type.startswith("image/") or attachment.content_type.startswith("video/"))
         for attachment in attachments

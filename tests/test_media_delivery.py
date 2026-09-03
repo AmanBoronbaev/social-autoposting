@@ -12,6 +12,7 @@ from app.main import (
     instagram_audio_access_error,
     normalized_upload_content_type,
     post_dict,
+    public_delivery_error,
     tiktok_photo_title_limit_error,
 )
 from app.models import Attachment, Connection, Delivery, Post, User
@@ -69,6 +70,15 @@ def test_whapi_uses_base64_json_media_not_an_external_url(tmp_path: Path, monkey
         "media": "data:image/png;name=poster.png;base64,aGVsbG8=",
     }
     assert "files" not in call
+
+
+def test_customer_sees_a_clear_whatsapp_size_error() -> None:
+    delivery = Delivery(status="failed", error="attachment exceeds configured WhatsApp media limit")
+
+    assert public_delivery_error(delivery) == (
+        "Итоговый файл больше допустимого объёма для WhatsApp. "
+        "Уменьшите файл или снимите WhatsApp с публикации."
+    )
 
 
 def test_telegram_sends_selected_images_as_ordered_albums(tmp_path: Path, monkeypatch) -> None:
