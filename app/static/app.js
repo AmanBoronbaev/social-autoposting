@@ -1,6 +1,12 @@
 const state = { token: sessionStorage.getItem("access_token"), me: null, connections: [] };
 let tiktokConnectionId = null;
 let instagramAudioConnectionId = null;
+const TARGET_PLATFORM_ORDER = {
+  telegram: 0,
+  whatsapp: 1,
+  instagram: 2,
+  tiktok: 3,
+};
 let adminUiLoaded = false;
 const appBasePath = new URL("./", document.baseURI).pathname.replace(/\/$/, "");
 const MAX_ATTACHMENTS_PER_POST = 35;
@@ -78,10 +84,17 @@ function renderConnections() {
   });
   const targets = $("#post-targets");
   clear(targets);
-  state.connections.filter((item) => item.status === "connected").forEach((connection) => {
-    const checkbox = node("input", { type: "checkbox", value: connection.id, name: "connection" });
-    targets.append(node("label", { class: "target" }, [checkbox, text(connection.label), node("small", { text: connection.platform })]));
-  });
+  [...state.connections]
+    .filter((item) => item.status === "connected")
+    .sort((left, right) => (
+      (TARGET_PLATFORM_ORDER[left.platform] ?? Number.MAX_SAFE_INTEGER)
+      - (TARGET_PLATFORM_ORDER[right.platform] ?? Number.MAX_SAFE_INTEGER)
+      || left.label.localeCompare(right.label, "ru")
+    ))
+    .forEach((connection) => {
+      const checkbox = node("input", { type: "checkbox", value: connection.id, name: "connection" });
+      targets.append(node("label", { class: "target" }, [checkbox, text(connection.label), node("small", { text: connection.platform })]));
+    });
   if (!targets.childElementCount) targets.append(node("span", { class: "muted", text: "Сначала добавьте площадку." }));
   void updatePostPlatformOptions();
 }
