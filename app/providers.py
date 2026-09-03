@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -58,8 +59,142 @@ def attachment_path(attachment: Attachment, settings: Settings) -> Path:
     return candidate
 
 
+def _video_duration_seconds(source: Path, settings: Settings) -> float:
+    """Read a prepared video's duration without loading media into memory."""
+    if shutil.which("ffprobe") is None:
+        raise ProviderError("ffprobe is required to fit video to a media limit")
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(source),
+            ],
+            capture_output=True,
+            timeout=settings.media_prepare_timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ProviderError("video conversion timed out") from error
+    if completed.returncode != 0:
+        raise ProviderError("could not determine video duration for compression")
+    try:
+        duration = float(completed.stdout.decode(errors="replace").strip())
+    except ValueError as error:
+        raise ProviderError("could not determine video duration for compression") from error
+    if duration <= 0:
+        raise ProviderError("could not determine video duration for compression")
+    return duration
+
+
+def _video_scale_filter(video_bit_rate: int) -> str:
+    """Trade resolution for a usable result when the available bitrate is tiny."""
+    if video_bit_rate < 250_000:
+        max_width = 640
+    elif video_bit_rate < 500_000:
+        max_width = 854
+    else:
+        max_width = 1920
+    return (
+        f"scale=w='min({max_width},iw)':h='min({max_width},ih)':"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
+
+
+def _fit_video_to_limit(source: Path, max_bytes: int, settings: Settings) -> Path:
+    """Create a bounded MP4 without truncating the video's duration.
+
+    Normalisation intentionally prefers quality. When a provider has a hard
+    final-file limit, use a two-pass re-encode only for that delivery. The
+    target includes a margin for audio and MP4 container overhead; a second
+    lower target handles unusual source streams conservatively.
+    """
+    if source.stat().st_size <= max_bytes:
+        return source
+    duration = _video_duration_seconds(source, settings)
+    temporary_dir = source.parent
+    for budget_ratio in (0.92, 0.80):
+        total_bit_rate = max(160_000, int(max_bytes * 8 * budget_ratio / duration))
+        audio_bit_rate = min(128_000, max(32_000, total_bit_rate // 8))
+        video_bit_rate = max(96_000, total_bit_rate - audio_bit_rate)
+        output = temporary_dir / f"{uuid4().hex}-limited.mp4"
+        passlog = temporary_dir / f"{uuid4().hex}-pass"
+        common = [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-map",
+            "0:v:0",
+            "-vf",
+            _video_scale_filter(video_bit_rate),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-b:v",
+            str(video_bit_rate),
+            "-maxrate",
+            str(video_bit_rate),
+            "-bufsize",
+            str(video_bit_rate * 2),
+            "-pix_fmt",
+            "yuv420p",
+            "-passlogfile",
+            str(passlog),
+        ]
+        try:
+            first_pass = subprocess.run(
+                [*common, "-an", "-pass", "1", "-f", "mp4", os.devnull],
+                capture_output=True,
+                timeout=settings.media_prepare_timeout_seconds,
+                check=False,
+            )
+            second_pass = subprocess.run(
+                [
+                    *common,
+                    "-map",
+                    "0:a?",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    str(audio_bit_rate),
+                    "-pass",
+                    "2",
+                    "-movflags",
+                    "+faststart",
+                    str(output),
+                ],
+                capture_output=True,
+                timeout=settings.media_prepare_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            output.unlink(missing_ok=True)
+            raise ProviderError("video conversion timed out") from error
+        finally:
+            for log_file in temporary_dir.glob(f"{passlog.name}*"):
+                log_file.unlink(missing_ok=True)
+        if second_pass.returncode == 0 and output.is_file() and output.stat().st_size <= max_bytes:
+            return output
+        output.unlink(missing_ok=True)
+        if first_pass.returncode != 0 or second_pass.returncode != 0:
+            continue
+    raise ProviderError("video cannot be compressed below the WhatsApp media limit")
+
+
 @contextmanager
-def prepared_attachment(attachment: Attachment, settings: Settings) -> Iterator[PreparedAttachment]:
+def prepared_attachment(
+    attachment: Attachment, settings: Settings, *, max_bytes: int | None = None
+) -> Iterator[PreparedAttachment]:
     """Normalize every uploaded video to an MP4/H.264/AAC, constant-30-FPS baseline.
 
     The same original may go to several platforms. Keeping the original in the
@@ -126,10 +261,15 @@ def prepared_attachment(attachment: Attachment, settings: Settings) -> Iterator[
         detail = completed.stderr.decode(errors="replace").strip()[:500]
         raise ProviderError(f"video conversion failed{f': {detail}' if detail else ''}")
     name = f"{Path(attachment.original_name).stem or 'video'}.mp4"
+    fitted_output: Path | None = None
     try:
-        yield PreparedAttachment(output, "video/mp4", name)
+        if max_bytes is not None:
+            fitted_output = _fit_video_to_limit(output, max_bytes, settings)
+        yield PreparedAttachment(fitted_output or output, "video/mp4", name)
     finally:
         output.unlink(missing_ok=True)
+        if fitted_output is not None and fitted_output != output:
+            fitted_output.unlink(missing_ok=True)
 
 
 def _response_json(response: httpx.Response, secret: str = "") -> dict[str, Any]:
@@ -306,24 +446,25 @@ TELEGRAM_DISCOVERY_UPDATE_TYPES = (
     "chat_join_request",
 )
 _LOCAL_TELEGRAM_BOT_SESSIONS: set[str] = set()
+_TELEGRAM_CLOUD_API_BASE_URL = "https://api.telegram.org"
 
 
 def ensure_local_telegram_bot_session(settings: Settings, bot_token: str) -> None:
-    """Move a bot from Telegram's cloud endpoint to the bundled local API once.
+    """Move a bot from Telegram's cloud endpoint to a configured local API once.
 
     Telegram requires `logOut` on the cloud Bot API before a bot token can be
     served by a local Bot API instance. Keep only a SHA-256 fingerprint in the
     process cache and never expose the token in any error.
     """
     local_base = str(settings.telegram_api_base_url).rstrip("/")
-    if local_base != "http://telegram-bot-api:8081":
+    if local_base == _TELEGRAM_CLOUD_API_BASE_URL:
         return
     token_fingerprint = hashlib.sha256(bot_token.encode()).hexdigest()
     if token_fingerprint in _LOCAL_TELEGRAM_BOT_SESSIONS:
         return
     try:
         with httpx.Client(timeout=20) as client:
-            response = client.post(f"https://api.telegram.org/bot{bot_token}/logOut")
+            response = client.post(f"{_TELEGRAM_CLOUD_API_BASE_URL}/bot{bot_token}/logOut")
     except httpx.HTTPError as error:
         raise ProviderError(
             f"Telegram cloud logout failed: {_safe_error(error, bot_token)}", retryable=True
@@ -611,7 +752,8 @@ def publish_whapi(
                 result.append(_response_json(response, api_token))
             else:
                 for index, attachment in enumerate(attachments):
-                    with prepared_attachment(attachment, settings) as prepared:
+                    video_limit = settings.whapi_max_media_bytes if attachment.content_type.startswith("video/") else None
+                    with prepared_attachment(attachment, settings, max_bytes=video_limit) as prepared:
                         _check_whapi_attachment_size(prepared, settings)
                         payload = {
                             "to": connection.external_id,

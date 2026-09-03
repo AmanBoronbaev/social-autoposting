@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     whapi_max_media_bytes: int = Field(
         default=100 * 1024**2,
         ge=1,
-        le=2 * 1024**3,
+        le=100 * 1024**2,
         validation_alias="WHAPI_MAX_MEDIA_BYTES",
     )
     whapi_max_document_bytes: int = Field(

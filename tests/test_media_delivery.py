@@ -137,6 +137,23 @@ def test_local_telegram_api_logs_a_bot_out_of_the_cloud_once(tmp_path: Path, mon
     ]
 
 
+def test_external_local_telegram_api_logs_a_bot_out_of_the_cloud_once(tmp_path: Path, monkeypatch) -> None:
+    settings = get_settings().model_copy(
+        update={"media_dir": tmp_path, "telegram_api_base_url": "https://telegram-api.internal"}
+    )
+    post = Post(content="Caption")
+    connection = Connection(external_id="-100123")
+    RecordingClient.calls = []
+    monkeypatch.setattr("app.providers.httpx.Client", RecordingClient)
+
+    publish_telegram(post, connection, settings, "external-local-test-telegram-token")
+
+    assert [call["url"] for call in RecordingClient.calls] == [
+        "https://api.telegram.org/botexternal-local-test-telegram-token/logOut",
+        "https://telegram-api.internal/botexternal-local-test-telegram-token/sendMessage",
+    ]
+
+
 def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     attachment = make_attachment(tmp_path, content_type="video/quicktime", name="camera.mov", content=b"source")
@@ -163,6 +180,39 @@ def test_video_is_prepared_as_mp4_before_delivery(tmp_path: Path, monkeypatch) -
         "fps=30,scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
     ] == captured[captured.index("-vf") : captured.index("-vf") + 2]
     assert not output.exists()
+
+
+def test_whapi_recompresses_an_oversized_video_to_its_limit(tmp_path: Path, monkeypatch) -> None:
+    settings = get_settings().model_copy(update={"media_dir": tmp_path, "whapi_max_media_bytes": 10})
+    attachment = make_attachment(tmp_path, content_type="video/mp4", name="large.mp4", content=b"source")
+    post = Post(content="Caption", attachments=[attachment])
+    connection = Connection(external_id="123@g.us")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr("app.providers.shutil.which", lambda _: "/usr/bin/tool")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        del kwargs
+        commands.append(command)
+        if command[0] == "ffprobe":
+            return subprocess.CompletedProcess(command, 0, b"5.0\n", b"")
+        if "-pass" in command and command[command.index("-pass") + 1] == "2":
+            Path(command[-1]).write_bytes(b"fits-limit")
+        elif command[-1].endswith(".mp4"):
+            Path(command[-1]).write_bytes(b"too-large-video-output")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    RecordingClient.calls = []
+    monkeypatch.setattr("app.providers.subprocess.run", fake_run)
+    monkeypatch.setattr("app.providers.httpx.Client", RecordingClient)
+
+    publish_whapi(post, connection, settings, "test-whapi-token")
+
+    assert any(command[0] == "ffprobe" for command in commands)
+    assert any("-pass" in command and command[command.index("-pass") + 1] == "2" for command in commands)
+    filename, file_handle, content_type = RecordingClient.calls[0]["files"]["media"]
+    assert (filename, content_type) == ("large.mp4", "video/mp4")
+    assert file_handle.closed
 
 
 def test_history_contains_destination_and_scoped_media_preview_url(tmp_path: Path) -> None:

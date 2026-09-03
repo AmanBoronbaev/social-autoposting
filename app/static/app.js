@@ -283,7 +283,7 @@ function updatePlatformMediaHelp() {
   if (unchangedTooLarge) {
     help.textContent = `${parts.join(" ")} «${unchangedTooLarge.name}» больше допустимого объёма и не будет отправлен. Уменьшите файл или снимите WhatsApp с публикации.`;
   } else if (videoOverLimit) {
-    help.textContent = `${parts.join(" ")} Видео будет сжато перед отправкой; если размер останется больше лимита WhatsApp, оно не будет отправлено.`;
+    help.textContent = `${parts.join(" ")} Видео будет автоматически сжато для WhatsApp; качество может снизиться. Если даже после сжатия файл не поместится, WhatsApp не получит его.`;
   } else {
     help.textContent = `${parts.join(" ")} Видео сжимается перед отправкой; фото и PDF отправляются без уменьшения.`;
   }

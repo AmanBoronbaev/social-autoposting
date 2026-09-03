@@ -29,8 +29,8 @@ The MVP already provides:
 - private local uploads, database-backed scheduled deliveries, idempotency keys,
   retry state, final-status checks for Zernio, and a separate worker process;
 - publication adapters for Zernio, Telegram and Whapi. Whapi receives media as
-  Base64 directly in its API request, so local testing doesn't require a public
-  media URL;
+  a streaming multipart upload, so local testing doesn't require a public media
+  URL or a Base64 copy in worker memory;
 - every uploaded video is prepared just before delivery as MP4/H.264/AAC, the
   broadly compatible baseline for Instagram, TikTok and WhatsApp. Common MOV,
   MKV, AVI, WebM, WMV and similar video extensions are accepted even when a
@@ -123,11 +123,18 @@ logged.
   admin; no personal Telegram account or MTProto session is used. On the first
   use after the switch, the worker safely calls Telegram's required `logOut`
   operation against the cloud Bot API for that customer's bot token.
+  A single local Bot API instance may also be shared by several projects and
+  bot tokens: set each project's `TELEGRAM_API_BASE_URL` to that private
+  endpoint, without enabling its bundled Compose profile. Do not expose this
+  endpoint directly to the public Internet; use an isolated private network or
+  an authenticated TLS proxy.
 - Whapi receives a streaming `multipart/form-data` file, never a public media
   URL or an in-memory Base64 copy. This avoids Base64 overhead and permits
   large documents. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB for photos and
-  final videos; `WHAPI_MAX_DOCUMENT_BYTES` defaults to 2,000 MiB for PDFs.
-  The delivery platform can still reject unsupported or oversized media.
+  final videos; an oversized video is re-encoded for that WhatsApp delivery to
+  fit the limit, with resolution/quality reduced when necessary.
+  `WHAPI_MAX_DOCUMENT_BYTES` defaults to 2,000 MiB for PDFs. The delivery
+  platform can still reject unsupported media.
 - Source uploads default to 500 MiB. Nginx and the API read the same
   `APP_MAX_UPLOAD_BYTES` value; multipart staging uses the private media volume
   rather than RAM. The production Docker image installs FFmpeg. It creates a
