@@ -483,6 +483,16 @@ def normalized_instagram_audio(payload: dict) -> list[dict[str, str | int | None
     return result
 
 
+def instagram_audio_access_error(error: Exception) -> str | None:
+    """Return an actionable, provider-neutral fix for a known account state."""
+    if "instagram_audio_requires_facebook_login" in str(error).casefold():
+        return (
+            "Музыкальный каталог доступен после переподключения Instagram через Facebook Login. "
+            "Попросите администратора переподключить эту площадку."
+        )
+    return None
+
+
 @app.get("/v1/connections/{connection_id}/instagram/audio", tags=["connections"])
 def search_instagram_audio(
     connection_id: str,
@@ -512,6 +522,9 @@ def search_instagram_audio(
             connection.external_id, audio_type=audio_type, query=q
         )
     except HTTPException as error:
+        known_error = instagram_audio_access_error(error)
+        if known_error is not None:
+            raise HTTPException(status_code=422, detail=known_error) from error
         if user.is_superuser:
             raise
         raise HTTPException(
@@ -519,6 +532,9 @@ def search_instagram_audio(
             detail="Музыка сейчас недоступна для этой Instagram-площадки. Проверьте её подключение.",
         ) from error
     except (ProviderError, ValueError) as error:
+        known_error = instagram_audio_access_error(error)
+        if known_error is not None:
+            raise HTTPException(status_code=422, detail=known_error) from error
         detail = f"could not load Instagram audio: {error}" if user.is_superuser else (
             "Музыка сейчас недоступна для этой Instagram-площадки. Проверьте её подключение."
         )

@@ -265,6 +265,10 @@ class ZernioClient:
             if not isinstance(raw_tiktok_settings, dict):
                 raise ProviderError("TikTok publication needs confirmed TikTok settings")
             tiktok_settings = dict(raw_tiktok_settings)
+            # TikTok drafts require an inbox editing flow and do not produce a
+            # completed publication. The product intentionally supports only
+            # final publishing, so legacy queued rows must not retain it.
+            tiktok_settings.pop("draft", None)
             cover_attachment_id = tiktok_settings.pop("video_cover_attachment_id", None)
             if isinstance(cover_attachment_id, str) and cover_attachment_id:
                 cover = post_cover_attachment(post, cover_attachment_id)

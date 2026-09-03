@@ -46,7 +46,6 @@ class TikTokSettingsIn(BaseModel):
     commercial_content_type: Literal["none", "brand_organic", "brand_content"] = "none"
     is_brand_organic_post: bool = False
     brand_partner_promote: bool = False
-    draft: bool = False
     auto_add_music: bool = False
     photo_cover_index: int | None = Field(default=None, ge=0, le=34)
     video_cover_timestamp_ms: int | None = Field(default=None, ge=0, le=600_000)

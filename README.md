@@ -112,9 +112,15 @@ logged.
 ## Important operational limits
 
 - This implementation defaults Telegram uploads to 50 MB. For larger Telegram
-  video, deploy Telegram’s Local Bot API server separately, point
-  `TELEGRAM_API_BASE_URL` at it, and raise all three limits coherently: Nginx,
-  `APP_MAX_UPLOAD_BYTES`, and `TELEGRAM_MAX_UPLOAD_BYTES`.
+  media, enable the included optional `telegram-local-api` Compose profile and
+  set `TELEGRAM_API_BASE_URL=http://telegram-bot-api:8081`,
+  `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and a matching
+  `TELEGRAM_MAX_UPLOAD_BYTES` in the server `.env`. This is still a Bot API:
+  every customer keeps their own encrypted bot token. Telegram’s local Bot API
+  supports uploads up to 2 GB, while this application intentionally defaults
+  source uploads to 500 MB. Keep the local API unexposed on the Docker network.
+  The bot must be a group member with permission to send media, or a channel
+  admin; no personal Telegram account or MTProto session is used.
 - Whapi receives local media directly as Base64. It therefore works during a
   local test as well as in production and never needs direct access to the
   media directory. `WHAPI_MAX_MEDIA_BYTES` defaults to 100 MB; account for the
@@ -130,7 +136,10 @@ logged.
 - For TikTok, the user must choose one visibility value returned for that exact
   TikTok account and confirm preview/consent. Comment, Duet and Stitch switches
   are always sent to the API but can be off; AI disclosure, commercial label,
-  TikTok Inbox draft, photo music and cover choices are optional. TikTok allows
+  TikTok photo music and cover choices are optional. TikTok has no API for
+  choosing a particular catalog track: it can only add recommended music to a
+  photo carousel. Instagram catalog music is available for one Reel video and
+  requires that account to be connected through Facebook Login. TikTok allows
   one video or up to 35 photos; Instagram carousel destinations keep their
   documented ten-item limit.
 - In the Admin page, select a customer, save their Zernio/Telegram/Whapi token,

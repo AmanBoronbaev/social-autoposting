@@ -287,7 +287,6 @@ async function updateTikTokOptions() {
   $("#tiktok-allow-duet").disabled = false;
   $("#tiktok-allow-stitch").disabled = false;
   $("#tiktok-ai").disabled = false;
-  $("#tiktok-draft").disabled = false;
   $("#tiktok-consent").disabled = false;
   $("#tiktok-auto-music").disabled = !hasPhotosOnly;
   $("#tiktok-photo-cover-index").disabled = !hasPhotosOnly;
@@ -578,7 +577,6 @@ $("#post-form").addEventListener("submit", async (event) => {
         allow_stitch: $("#tiktok-allow-stitch").checked,
         video_made_with_ai: $("#tiktok-ai").checked,
         commercial_content_type: $("#tiktok-commercial").value,
-        draft: $("#tiktok-draft").checked,
         auto_add_music: $("#tiktok-auto-music").checked,
         photo_cover_index: $("#tiktok-photo-cover-index").value === "" ? null : Number($("#tiktok-photo-cover-index").value),
         video_cover_timestamp_ms: $("#tiktok-video-cover-timestamp").value === "" ? null : Number($("#tiktok-video-cover-timestamp").value),

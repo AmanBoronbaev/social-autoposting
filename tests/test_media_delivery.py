@@ -7,7 +7,13 @@ import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.main import connection_dict, normalized_upload_content_type, post_dict, tiktok_photo_title_limit_error
+from app.main import (
+    connection_dict,
+    instagram_audio_access_error,
+    normalized_upload_content_type,
+    post_dict,
+    tiktok_photo_title_limit_error,
+)
 from app.models import Attachment, Connection, Delivery, Post, User
 from app.providers import ZernioClient, prepared_attachment, publish_telegram, publish_whapi
 from app.settings import get_settings
@@ -195,6 +201,14 @@ def test_tiktok_photo_title_limit_is_checked_before_delivery() -> None:
     )
 
 
+def test_instagram_audio_login_requirement_has_a_safe_fix_message() -> None:
+    assert instagram_audio_access_error(RuntimeError("instagram_audio_requires_facebook_login")) == (
+        "Музыкальный каталог доступен после переподключения Instagram через Facebook Login. "
+        "Попросите администратора переподключить эту площадку."
+    )
+    assert instagram_audio_access_error(RuntimeError("connection failed")) is None
+
+
 def test_zernio_uses_a_cover_only_as_cover_not_as_post_media(tmp_path: Path, monkeypatch) -> None:
     settings = get_settings().model_copy(update={"media_dir": tmp_path})
     media = make_attachment(tmp_path, content_type="image/png", name="post.png", content=b"post")
@@ -253,6 +267,7 @@ def test_zernio_tiktok_custom_cover_is_sent_as_a_public_image_url(tmp_path: Path
                 "privacy_level": "PUBLIC_TO_EVERYONE",
                 "content_preview_confirmed": True,
                 "express_consent_given": True,
+                "draft": True,
                 "video_cover_attachment_id": "cover",
             }
         }
@@ -276,6 +291,7 @@ def test_zernio_tiktok_custom_cover_is_sent_as_a_public_image_url(tmp_path: Path
     assert isinstance(payload, dict)
     settings_payload = payload["tiktokSettings"]
     assert settings_payload["video_cover_image_url"] == "https://media.example/cover.webp"
+    assert "draft" not in settings_payload
     assert "video_cover_attachment_id" not in settings_payload
 
 
