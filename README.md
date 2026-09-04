@@ -137,8 +137,10 @@ logged.
   `WHAPI_MAX_DOCUMENT_BYTES` defaults to 2,000 MiB for PDFs. The delivery
   platform can still reject unsupported media.
 - Source uploads default to 500 MiB. Nginx and the API read the same
-  `APP_MAX_UPLOAD_BYTES` value; multipart staging uses the private media volume
-  rather than RAM. The production Docker image installs FFmpeg. It creates a
+  `APP_MAX_UPLOAD_BYTES` value. The browser sends every file in private 8 MiB
+  resumable chunks, so a short Safari/mobile network interruption retries only
+  the current chunk instead of restarting the whole file. Incomplete staged
+  uploads expire after 24 hours. The production Docker image installs FFmpeg. It creates a
   temporary MP4/H.264/AAC copy of every video, at 30 FPS and no larger than
   1080p, before delivery, then removes it; source uploads stay untouched.
   Browser and Nginx upload timeouts are two hours so a large upload over a slow
@@ -187,8 +189,9 @@ logged.
    assigns it with `POST /v1/admin/users/{user_id}/connections`. The Admin UI
    obtains candidate accounts through `/zernio/accounts`, `/whapi/targets`, and
    `/telegram/targets`; `external_id` remains internal to the API.
-4. A customer can only view assigned destinations, upload files using
-   `POST /v1/uploads`, then create a post with
+4. A customer can only view assigned destinations, upload files using the
+   resumable `/v1/upload-sessions` flow (the legacy `POST /v1/uploads` remains
+   available for compatible API clients), then create a post with
    `POST /v1/posts`. One delivery is created for every selected destination.
 
 The first integration test before real launch should use separate test accounts,

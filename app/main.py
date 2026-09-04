@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import jwt
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -12,9 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Attachment, Connection, Delivery, Post, ProviderCredential, User
+from app.models import Attachment, Connection, Delivery, Post, ProviderCredential, UploadSession, User
 from app.providers import ProviderError, WhapiClient, ZernioClient, attachment_path, list_telegram_targets
-from app.schemas import AdminUserIn, ConnectionIn, LoginIn, PostIn, ProviderCredentialIn, TokenOut
+from app.schemas import AdminUserIn, ConnectionIn, LoginIn, PostIn, ProviderCredentialIn, TokenOut, UploadSessionIn
 from app.security import (
     decrypt_credentials,
     encrypt_credentials,
@@ -31,6 +31,8 @@ app = FastAPI(title="Autoposting Platform", version="0.1.0", docs_url=None, redo
 bearer = HTTPBearer(auto_error=False)
 MEDIA_AUDIENCE = "whapi-media"
 TIKTOK_PHOTO_TITLE_MAX_LENGTH = 90
+UPLOAD_CHUNK_BYTES = 8 * 1024**2
+UPLOAD_SESSION_TTL = timedelta(hours=24)
 STATIC_DIR = Path(__file__).parent / "static"
 ADMIN_ASSETS_DIR = Path(__file__).parent / "admin_assets"
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
@@ -87,6 +89,39 @@ def normalized_upload_content_type(declared_type: str | None, original_name: str
     if content_type.startswith("image/") or content_type.startswith("video/") or content_type == "application/pdf":
         return content_type
     return UPLOAD_CONTENT_TYPES.get(Path(original_name).suffix.lower())
+
+
+def upload_session_path(session: UploadSession, settings: Settings) -> Path:
+    """Return the private staging path belonging to one authenticated user."""
+    root = (settings.media_dir / ".uploads").resolve()
+    candidate = (root / session.user_id / session.id).resolve()
+    if root not in candidate.parents:
+        raise RuntimeError("invalid upload staging path")
+    return candidate
+
+
+def delete_upload_session_file(session: UploadSession, settings: Settings) -> None:
+    path = upload_session_path(session, settings)
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
+def cleanup_expired_upload_sessions(db: Session, settings: Settings) -> None:
+    """Bound cleanup work performed before a new upload, without a cron job."""
+    expired = list(
+        db.scalars(
+            select(UploadSession)
+            .where(UploadSession.expires_at < now())
+            .order_by(UploadSession.expires_at)
+            .limit(50)
+        )
+    )
+    for session in expired:
+        delete_upload_session_file(session, settings)
+        db.delete(session)
 
 
 def tiktok_photo_title_limit_error(content: str) -> str | None:
@@ -777,6 +812,154 @@ async def upload(
         storage_key=storage_key,
     )
     db.add(attachment)
+    db.flush()
+    return {"id": attachment.id, "name": attachment.original_name, "size_bytes": attachment.size_bytes}
+
+
+def upload_session_dict(session: UploadSession) -> dict:
+    return {
+        "id": session.id,
+        "offset": session.uploaded_bytes,
+        "size_bytes": session.total_bytes,
+        "chunk_size": UPLOAD_CHUNK_BYTES,
+    }
+
+
+def upload_session_expired(session: UploadSession) -> bool:
+    expires_at = session.expires_at
+    # SQLite returns naive timestamps in the test/dev configuration, while
+    # PostgreSQL preserves the timezone. Both represent UTC here.
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at < now()
+
+
+def current_upload_session(session_id: str, user_id: str, db: Session, *, lock: bool = False) -> UploadSession:
+    statement = select(UploadSession).where(UploadSession.id == session_id, UploadSession.user_id == user_id)
+    if lock:
+        statement = statement.with_for_update()
+    session = db.scalar(statement)
+    if session is None:
+        raise HTTPException(status_code=404, detail="upload session not found")
+    if upload_session_expired(session):
+        raise HTTPException(status_code=410, detail="upload session expired; choose the file again")
+    return session
+
+
+@app.post("/v1/upload-sessions", status_code=status.HTTP_201_CREATED, tags=["media"])
+def create_upload_session(
+    payload: UploadSessionIn,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    original_name = Path(payload.original_name).name
+    content_type = normalized_upload_content_type(payload.content_type, original_name)
+    if not original_name or content_type is None:
+        raise HTTPException(status_code=415, detail="only image, video and PDF uploads are accepted")
+    if payload.size_bytes > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="upload exceeds configured limit")
+    cleanup_expired_upload_sessions(db, settings)
+    session = UploadSession(
+        user_id=user.id,
+        original_name=original_name,
+        content_type=content_type,
+        total_bytes=payload.size_bytes,
+        expires_at=now() + UPLOAD_SESSION_TTL,
+    )
+    db.add(session)
+    db.flush()
+    return upload_session_dict(session)
+
+
+@app.get("/v1/upload-sessions/{session_id}", tags=["media"])
+def read_upload_session(
+    session_id: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return upload_session_dict(current_upload_session(session_id, user.id, db))
+
+
+@app.patch("/v1/upload-sessions/{session_id}", tags=["media"])
+async def append_upload_chunk(
+    session_id: str,
+    request: Request,
+    upload_offset: int = Header(..., alias="Upload-Offset", ge=0),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    session = current_upload_session(session_id, user.id, db, lock=True)
+    if upload_offset != session.uploaded_bytes:
+        raise HTTPException(status_code=409, detail="upload offset does not match the received data")
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            if int(declared_length) > UPLOAD_CHUNK_BYTES:
+                raise HTTPException(status_code=413, detail="upload chunk is too large")
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="invalid upload chunk length") from error
+    path = upload_session_path(session, settings)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    bytes_written = 0
+    try:
+        with path.open("a+b") as output:
+            output.seek(0, 2)
+            # If a connection dies after writing bytes but before its database
+            # transaction commits, discard that unacknowledged tail on resume.
+            if output.tell() != session.uploaded_bytes:
+                output.truncate(session.uploaded_bytes)
+                output.seek(session.uploaded_bytes)
+            async for chunk in request.stream():
+                bytes_written += len(chunk)
+                if bytes_written > UPLOAD_CHUNK_BYTES or session.uploaded_bytes + bytes_written > session.total_bytes:
+                    raise HTTPException(status_code=413, detail="upload chunk exceeds the declared file size")
+                output.write(chunk)
+            output.flush()
+    except Exception:
+        # The persisted offset still points to the last acknowledged chunk.
+        raise
+    if bytes_written == 0:
+        raise HTTPException(status_code=422, detail="upload chunk is empty")
+    session.uploaded_bytes += bytes_written
+    session.expires_at = now() + UPLOAD_SESSION_TTL
+    db.flush()
+    return upload_session_dict(session)
+
+
+@app.post("/v1/upload-sessions/{session_id}/complete", status_code=status.HTTP_201_CREATED, tags=["media"])
+def complete_upload_session(
+    session_id: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    session = current_upload_session(session_id, user.id, db, lock=True)
+    source = upload_session_path(session, settings)
+    if (
+        session.uploaded_bytes != session.total_bytes
+        or not source.is_file()
+        or source.stat().st_size != session.total_bytes
+    ):
+        raise HTTPException(status_code=409, detail="upload is not complete yet")
+    storage_key = f"{user.id}/{uuid4().hex}"
+    destination = settings.media_dir / storage_key
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    attachment = Attachment(
+        user_id=user.id,
+        original_name=session.original_name,
+        content_type=session.content_type,
+        size_bytes=session.total_bytes,
+        storage_key=storage_key,
+    )
+    db.add(attachment)
+    db.flush()
+    try:
+        source.replace(destination)
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="could not finalize uploaded file") from error
+    db.delete(session)
     db.flush()
     return {"id": attachment.id, "name": attachment.original_name, "size_bytes": attachment.size_bytes}
 

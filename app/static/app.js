@@ -11,6 +11,7 @@ let adminUiLoaded = false;
 const appBasePath = new URL("./", document.baseURI).pathname.replace(/\/$/, "");
 const MAX_ATTACHMENTS_PER_POST = 35;
 const TIKTOK_PHOTO_TITLE_MAX_LENGTH = 90;
+const UPLOAD_CHUNK_RETRIES = 4;
 
 const $ = (selector) => document.querySelector(selector);
 const clear = (node) => node.replaceChildren();
@@ -260,7 +261,7 @@ function instagramVideoLimitBytes() {
 }
 
 function updateUploadLimitHelp() {
-  $("#upload-limit-help").textContent = `До ${formatFileSize(uploadLimitBytes())} на файл. Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Видео перед отправкой приводится к MP4 (H.264/AAC), 30 FPS и максимуму 1080p. PDF можно отправлять только в Telegram и WhatsApp.`;
+  $("#upload-limit-help").textContent = `До ${formatFileSize(uploadLimitBytes())} на файл. Порядок в списке — порядок публикации: файл №1 будет первым в карусели и Telegram-альбоме. Загрузка идёт частями и сама продолжится после краткого обрыва связи. Видео перед отправкой приводится к MP4 (H.264/AAC), 30 FPS и максимуму 1080p. PDF можно отправлять только в Telegram и WhatsApp.`;
 }
 
 function updatePlatformMediaHelp() {
@@ -511,19 +512,25 @@ $("#instagram-audio-search").addEventListener("click", () => void loadInstagramA
 $("#tiktok-cover-file").addEventListener("change", () => renderUploadQueue());
 $("#instagram-cover-file").addEventListener("change", () => renderUploadQueue());
 
-function uploadFile(file, onProgress) {
-  const resolvedPath = `${appBasePath}/v1/uploads`.replace(/^\/{2,}/, "/");
+function sleep(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function uploadChunk(sessionId, file, offset, chunkSize, onProgress) {
+  const resolvedPath = `${appBasePath}/v1/upload-sessions/${sessionId}`.replace(/^\/{2,}/, "/");
+  const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open("POST", resolvedPath);
-    // A large source video can take substantially longer than fifteen minutes
-    // on a mobile connection. Nginx uses the same two-hour ceiling; the upload
-    // progress row remains visible while bytes are still moving.
+    request.open("PATCH", resolvedPath);
+    // Every request carries only a small part of the file. Safari can resume
+    // after a mobile TLS/network interruption instead of restarting from zero.
     request.timeout = 7_200_000;
     if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    request.setRequestHeader("Content-Type", "application/offset+octet-stream");
+    request.setRequestHeader("Upload-Offset", String(offset));
     request.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
-      onProgress(Math.round((event.loaded / event.total) * 100));
+      onProgress(Math.round(((offset + event.loaded) / file.size) * 100));
     };
     request.onload = () => {
       let payload = {};
@@ -531,18 +538,62 @@ function uploadFile(file, onProgress) {
       if (request.status >= 200 && request.status < 300) {
         resolve(payload);
       } else {
-        reject(new Error(errorText(payload)));
+        const error = new Error(errorText(payload));
+        error.status = request.status;
+        error.retryable = request.status === 409 || request.status >= 500;
+        reject(error);
       }
     };
-    request.onerror = () => reject(new Error(
-      `Не удалось загрузить «${file.name}». Проверьте интернет, размер файла и не закрывайте страницу.`
-    ));
-    request.ontimeout = () => reject(new Error(`Загрузка «${file.name}» заняла слишком много времени. Попробуйте ещё раз.`));
+    request.onerror = () => {
+      const error = new Error(`Связь с сервером прервалась при загрузке «${file.name}».`);
+      error.retryable = true;
+      reject(error);
+    };
+    request.ontimeout = () => {
+      const error = new Error(`Не удалось дождаться ответа при загрузке «${file.name}».`);
+      error.retryable = true;
+      reject(error);
+    };
     request.onabort = () => reject(new Error(`Загрузка «${file.name}» была отменена.`));
-    const form = new FormData();
-    form.append("file", file);
-    request.send(form);
+    request.send(chunk);
   });
+}
+
+async function uploadFile(file, onProgress, onStatus) {
+  const session = await api("/v1/upload-sessions", {
+    method: "POST",
+    body: JSON.stringify({ original_name: file.name, content_type: file.type || null, size_bytes: file.size }),
+  });
+  let offset = session.offset;
+  while (offset < file.size) {
+    let delivered = false;
+    for (let attempt = 0; attempt < UPLOAD_CHUNK_RETRIES; attempt += 1) {
+      try {
+        const result = await uploadChunk(session.id, file, offset, session.chunk_size, onProgress);
+        offset = result.offset;
+        delivered = true;
+        break;
+      } catch (error) {
+        if (!error.retryable || attempt === UPLOAD_CHUNK_RETRIES - 1) break;
+        onStatus(`Связь прервалась — продолжаем (${attempt + 1}/${UPLOAD_CHUNK_RETRIES})…`);
+        await sleep((attempt + 1) * 1_000);
+        try {
+          // The response can disappear after the server accepted the chunk.
+          // Ask for its acknowledged offset before retrying anything.
+          offset = (await api(`/v1/upload-sessions/${session.id}`)).offset;
+          if (offset >= file.size) { delivered = true; break; }
+        } catch {
+          // Keep the current offset and use the next retry attempt.
+        }
+      }
+    }
+    if (!delivered) {
+      throw new Error(
+        `Не удалось продолжить загрузку «${file.name}». Проверьте Wi‑Fi/мобильную сеть, отключите VPN или Private Relay и выберите файл ещё раз.`
+      );
+    }
+  }
+  return api(`/v1/upload-sessions/${session.id}/complete`, { method: "POST" });
 }
 
 function validatePostMedia(selected) {
@@ -659,14 +710,15 @@ $("#post-form").addEventListener("submit", async (event) => {
     let queueIndex = 0;
     const uploadQueueFile = async (file) => {
       renderUploadQueue({ activeIndex: queueIndex, completeThrough: queueIndex - 1, title: "Загружаем файлы" });
-      const upload = await uploadFile(file, (percent) => {
-        renderUploadQueue({
-          activeIndex: queueIndex,
-          activeStatus: `Загрузка: ${percent}%`,
-          completeThrough: queueIndex - 1,
-          title: "Загружаем файлы",
-        });
+      const showUploadStatus = (activeStatus) => renderUploadQueue({
+        activeIndex: queueIndex,
+        activeStatus,
+        completeThrough: queueIndex - 1,
+        title: "Загружаем файлы",
       });
+      const upload = await uploadFile(file, (percent) => {
+        showUploadStatus(`Загрузка: ${percent}%`);
+      }, showUploadStatus);
       queueIndex += 1;
       return upload;
     };

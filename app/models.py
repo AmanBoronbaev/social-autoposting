@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -104,6 +104,20 @@ class Attachment(Timestamped, Base):
 
     user: Mapped[User] = relationship(back_populates="attachments")
     post: Mapped[Post | None] = relationship(back_populates="attachments")
+
+
+class UploadSession(Timestamped, Base):
+    """Private, resumable staging area for one browser file upload."""
+
+    __tablename__ = "upload_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    original_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(255))
+    total_bytes: Mapped[int] = mapped_column(BigInteger)
+    uploaded_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Delivery(Timestamped, Base):

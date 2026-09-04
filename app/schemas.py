@@ -37,6 +37,12 @@ class ProviderCredentialIn(BaseModel):
     api_token: str = Field(min_length=10, max_length=4096)
 
 
+class UploadSessionIn(BaseModel):
+    original_name: str = Field(min_length=1, max_length=1024)
+    content_type: str | None = Field(default=None, max_length=255)
+    size_bytes: int = Field(ge=1, le=5 * 1024**3)
+
+
 class TikTokSettingsIn(BaseModel):
     privacy_level: str = Field(min_length=1, max_length=64)
     allow_comment: bool = False
